@@ -158,7 +158,7 @@ with tab1:
             template="plotly_white",
             height=350,
             title=dict(
-                text=f"EMA{p} — Última atualização: {now_local.strftime('%H:%M:%S')}", font=dict(size=14)),
+                text=f"{p} — Última atualização: {now_local.strftime('%H:%M:%S')}", font=dict(size=14)),
             margin=dict(l=10, r=10, t=40, b=20),
             xaxis=dict(title="Data/Hora (BRT)", showgrid=False, nticks=8),
             yaxis=dict(title="Ativos acima", showgrid=False,
@@ -190,4 +190,5 @@ with tab2:
             st.write("_Nenhum par acima desta EMA no momento_")
 
     st.caption("Feito com Streamlit • Dados via FinancialModelingPrep")
+
 
