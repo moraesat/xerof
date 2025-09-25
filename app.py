@@ -10,7 +10,7 @@ from streamlit_autorefresh import st_autorefresh
 # ===========================
 # Configurações principais
 # ===========================
-st.set_page_config(page_title="Market Breadth — EMA Counts",
+st.set_page_config(page_title="Market Breadth",
                    layout="wide", page_icon="📈")
 API_KEY = "3CImfjoxNd98om3uhS89X4lmlp4Mrp3H"
 TZ = pytz.timezone("America/Sao_Paulo")
@@ -30,7 +30,7 @@ st_autorefresh(interval=60 * 1000, key="refresh")
 # ===========================
 st.sidebar.title("Configurações")
 MA_INPUT = st.sidebar.text_input(
-    "Períodos das EMAs (separados por vírgula)", "50,72,200")
+    "Períodos", "50,72,200")
 MA_PERIODS = [int(x.strip())
               for x in MA_INPUT.split(",") if x.strip().isdigit()]
 
@@ -92,7 +92,7 @@ tab1, tab2 = st.tabs(["📊 Gráficos", "📑 Resumo de Mercado"])
 # TAB 1 — Gráficos
 # ===========================
 with tab1:
-    st.title("Market Breadth — Ativos acima das EMAs")
+    st.title("Market Breadth")
     st.caption(
         f"Períodos configuráveis — Timeframe: {TIMEFRAME} — Últimos {NUM_CANDLES} candles")
 
@@ -190,3 +190,4 @@ with tab2:
             st.write("_Nenhum par acima desta EMA no momento_")
 
     st.caption("Feito com Streamlit • Dados via FinancialModelingPrep")
+
