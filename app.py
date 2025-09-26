@@ -14,8 +14,8 @@ st.set_page_config(page_title="Market Breadth",
                    layout="wide", page_icon="📈")
 API_KEY = "3CImfjoxNd98om3uhS89X4lmlp4Mrp3H"
 TZ = pytz.timezone("America/Sao_Paulo")
-ASSETS = ["USDXAU", "USDGBP", "USDJPY", "USDCHF", "USDCAD", "USDEUR", "USDNOK", "USDAUD", "USDNZD", "USDSEK", "USDCNH", "USDZAR", "USDCZK", "USDDKK", "USDSGD", "USDPLN",
-          "USDMXN", "USDHKD", "USDHUF", "USDTHB", "USDTRY", "USDXAG", "DX-Y.NYB"]
+ASSETS = ["USDJPY", "USDCHF", "USDCAD", "USDNOK", "USDSEK", "USDCNH", "USDZAR", "USDCZK", "USDDKK", "USDSGD", "USDPLN",
+          "USDMXN", "USDHKD", "USDHUF", "DX-Y.NYB"]
 #['AUDUSD', 'CADUSD', 'CHFUSD', 'CNHUSD', 'CZKUSD', 'DKKUSD', 'EURUSD',
           #'GBPUSD', 'HUFUSD', 'HKDUSD', 'JPYUSD', 'NOKUSD', 'NZDUSD', 'PLNUSD',
           #'SEKUSD', 'SGDUSD', 'TRYUSD', 'XAUUSD', 'XAGUSD', 'ZARUSD']
@@ -192,6 +192,7 @@ with tab2:
             st.write("_Nenhum par acima desta EMA no momento_")
 
     st.caption("Feito com Streamlit • Dados via FinancialModelingPrep")
+
 
 
 
