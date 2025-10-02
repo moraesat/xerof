@@ -32,7 +32,7 @@ st_autorefresh(interval=60 * 1000, key="refresh")
 # ===========================
 st.sidebar.title("Configurações")
 MA_INPUT = st.sidebar.text_input(
-    "Períodos", "50,72,200")
+    "Períodos", "9,21,72,200")
 MA_PERIODS = [int(x.strip())
               for x in MA_INPUT.split(",") if x.strip().isdigit()]
 
@@ -192,6 +192,7 @@ with tab2:
             st.write("_Nenhum par acima desta EMA no momento_")
 
     st.caption("Feito com Streamlit • Dados via FinancialModelingPrep")
+
 
 
 
