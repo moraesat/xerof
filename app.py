@@ -109,10 +109,11 @@ if combined.empty:
     st.error("Nenhum dado disponível. Verifique a API ou os símbolos dos ativos.")
     st.stop()
 
-# --- Cálculos de EMAs, Condições e Agressão ---
+# --- Cálculos de EMAs, Condições, Agressão e Coesão ---
 weighted_counts = {p: pd.Series(0.0, index=combined.index) for p in MA_PERIODS}
 aggression_buyer = pd.Series(0.0, index=combined.index)
 aggression_seller = pd.Series(0.0, index=combined.index)
+returns_cols = []
 
 for s in ASSETS:
     close_col, open_col, high_col, low_col = f"{s}_close", f"{s}_open", f"{s}_high", f"{s}_low"
@@ -133,6 +134,15 @@ for s in ASSETS:
         ema_val = combined[close_col].ewm(span=p, adjust=False).mean()
         combined[above_col] = combined[close_col] > ema_val
         weighted_counts[p] += combined[above_col].astype(int) * weight
+    
+    # Coleta de retornos para cálculo de coesão
+    returns_cols.append(combined[close_col].pct_change().rename(s))
+
+# Cálculo de Coesão
+returns_df = pd.concat(returns_cols, axis=1)
+dispersion = returns_df.std(axis=1)
+cohesion_index = (1 / dispersion).rolling(window=20).mean() # Inverso da dispersão = coesão
+
 
 # --- Cálculos de Z-Score, ROC e Aceleração ---
 z_scores, rocs, accelerations = {}, {}, {}
@@ -221,12 +231,31 @@ with tab1:
         height=350, template="plotly_white", margin=dict(l=20, r=20, t=40, b=20)
     )
     st.plotly_chart(fig_agg, use_container_width=True)
+    
+    st.divider()
+
+    # --- IMPLEMENTAÇÃO 5: ÍNDICE DE COESÃO ---
+    st.header("Implementação 5: Índice de Coesão (Sentimento de Risco)")
+    st.markdown("Mede a correlação entre os ativos da cesta. Um pico indica que os ativos estão a mover-se em uníssono, sinalizando um sentimento de **Risk-Off** (medo).")
+    st.latex(r'''
+    \text{Coesão} = \frac{1}{\text{Desvio Padrão dos Retornos}}
+    ''')
+
+    cohesion_series = cohesion_index.tail(NUM_CANDLES_DISPLAY)
+    fig_coh = go.Figure()
+    fig_coh.add_trace(go.Scatter(x=cohesion_series.index, y=cohesion_series.values, name='Coesão', line=dict(color='teal'), fill='tozeroy'))
+    fig_coh.update_layout(
+        title='Índice de Coesão do Mercado',
+        yaxis_title="Nível de Coesão (Risk-Off)",
+        height=350, template="plotly_white", margin=dict(l=20, r=20, t=40, b=20)
+    )
+    st.plotly_chart(fig_coh, use_container_width=True)
 
 
 with tab2:
     st.header("Resumo Atual")
     
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     with col1:
         st.subheader("Força Ponderada")
         latest_counts_weighted = {f"EMA {p}": f"{int(weighted_counts[p].iloc[-1])}%" for p in MA_PERIODS if not weighted_counts[p].empty}
@@ -252,6 +281,12 @@ with tab2:
                 f"Aceleração (EMA {p})": f"{accelerations[p].iloc[-1]:.2f}"
             }
             st.table(pd.DataFrame.from_dict(latest_dynamics, orient="index", columns=["Valor Atual"]))
+
+    with col3:
+        st.subheader("Sentimento de Risco")
+        latest_cohesion = {"Índice de Coesão": f"{cohesion_index.iloc[-1]:.2f}"}
+        st.table(pd.DataFrame.from_dict(latest_cohesion, orient='index', columns=['Valor Atual']))
+
 
 st.caption("Feito com Streamlit • Dados via FinancialModelingPrep")
 
