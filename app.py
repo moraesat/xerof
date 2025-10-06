@@ -46,6 +46,7 @@ Z_SCORE_WINDOW = st.sidebar.slider("Janela de Cálculo do Z-Score", 50, 500, 200
 st.sidebar.header("Parâmetros de Agressão")
 ATR_PERIOD = st.sidebar.slider("Período do ATR", 10, 30, 14)
 ENERGY_THRESHOLD = st.sidebar.slider("Limiar de 'Energia' da Vela", 1.0, 3.0, 1.5, 0.1)
+CLIMAX_Z_WINDOW = st.sidebar.slider("Janela Z-Score do Clímax", 50, 200, 100)
 
 st.sidebar.header("Parâmetros de Momentum")
 MOMENTUM_PERIOD = st.sidebar.slider("Período do ROC (Momentum)", 10, 50, 21)
@@ -100,6 +101,12 @@ def calculate_atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int
     true_range = np.max(ranges, axis=1)
     return true_range.rolling(window=period).mean()
 
+def calculate_zscore(series: pd.Series, window: int) -> pd.Series:
+    """Calcula o Z-Score de uma série."""
+    mean = series.rolling(window=window).mean()
+    std = series.rolling(window=window).std()
+    return (series - mean) / std
+
 # ===========================
 # Lógica Principal e Cálculos
 # ===========================
@@ -141,21 +148,22 @@ for s in ASSETS:
     
     # Cálculo de Momentum Individual Normalizado
     roc = combined[close_col].pct_change(periods=MOMENTUM_PERIOD)
-    roc_mean = roc.rolling(window=MOMENTUM_Z_WINDOW).mean()
-    roc_std = roc.rolling(window=MOMENTUM_Z_WINDOW).std()
-    normalized_momentum = (roc - roc_mean) / roc_std
+    normalized_momentum = calculate_zscore(roc, MOMENTUM_Z_WINDOW)
     momentum_components.append(normalized_momentum.rename(s) * weight)
 
 # Cálculo do Índice de Momentum Agregado
 aggregate_momentum_index = pd.concat(momentum_components, axis=1).sum(axis=1)
 
+# Cálculo do Z-Score de Clímax de Agressão
+buyer_climax_zscore = calculate_zscore(aggression_buyer, CLIMAX_Z_WINDOW)
+seller_climax_zscore = calculate_zscore(aggression_seller, CLIMAX_Z_WINDOW)
+
+
 # --- Cálculos de Z-Score, ROC e Aceleração ---
 z_scores, rocs, accelerations = {}, {}, {}
 for p in MA_PERIODS:
     series = weighted_counts[p]
-    mean = series.rolling(window=Z_SCORE_WINDOW).mean()
-    std = series.rolling(window=Z_SCORE_WINDOW).std()
-    z_scores[p] = (series - mean) / std
+    z_scores[p] = calculate_zscore(series, Z_SCORE_WINDOW)
     rocs[p] = series.diff()
     accelerations[p] = rocs[p].diff()
 
@@ -217,10 +225,8 @@ with tab1:
 
     # --- IMPLEMENTAÇÃO 4: AMPLITUDE DE AGRESSÃO ---
     st.header("Implementação 4: Amplitude de Agressão")
-    st.markdown("Mede a força de movimentos explosivos no mercado. Um pico de agressão compradora (verde) ou vendedora (vermelho) pode sinalizar o início de um impulso ou um clímax de exaustão.")
-    st.latex(r'''
-    \text{Energia da Vela} = \frac{(\text{Máxima} - \text{Mínima})}{\text{ATR}(\text{Período})}
-    ''')
+    st.markdown("Mede a força de movimentos explosivos no mercado, sinalizando o início de um impulso ou um clímax de exaustão.")
+    st.latex(r''' \text{Energia da Vela} = \frac{(\text{Máxima} - \text{Mínima})}{\text{ATR}(\text{Período})} ''')
     
     agg_buyer_series = aggression_buyer.tail(NUM_CANDLES_DISPLAY)
     agg_seller_series = aggression_seller.tail(NUM_CANDLES_DISPLAY)
@@ -234,20 +240,31 @@ with tab1:
 
     # --- IMPLEMENTAÇÃO 5: ÍNDICE DE MOMENTUM AGREGADO ---
     st.header("Implementação 5: Índice de Momentum Agregado")
-    st.markdown("Mede a saúde da tendência. Calcula o momentum de cada ativo, normaliza-o estatisticamente (Z-Score) e agrega os resultados de forma ponderada. Um índice positivo e a subir indica um momentum de mercado forte e generalizado.")
-    st.latex(r'''
-    \text{Momentum Normalizado}_i = \frac{\text{ROC}_i - \text{Média}(\text{ROC}_i)}{\text{DesvioPadrão}(\text{ROC}_i)}
-    ''')
-    st.latex(r'''
-    \text{Índice Agregado} = \sum_{i=1}^{N} (\text{Momentum Normalizado}_i \times \text{Peso}_i)
-    ''')
+    st.markdown("Mede a saúde da tendência. Um índice positivo e a subir indica um momentum de mercado forte e generalizado.")
+    st.latex(r''' \text{Índice Agregado} = \sum (\text{Momentum Normalizado}_i \times \text{Peso}_i) ''')
 
     momentum_series = aggregate_momentum_index.tail(NUM_CANDLES_DISPLAY)
     fig_mom = go.Figure()
     fig_mom.add_trace(go.Scatter(x=momentum_series.index, y=momentum_series.values, name='Momentum Agregado', line=dict(color='#636EFA'), fill='tozeroy'))
     fig_mom.add_hline(y=0, line_dash="dash", line_color="grey")
-    fig_mom.update_layout(title='Índice de Momentum Agregado Ponderado', yaxis_title="Força do Momentum (Z-Score Ponderado)", height=350, template="plotly_white", margin=dict(l=20, r=20, t=40, b=20))
+    fig_mom.update_layout(title='Índice de Momentum Agregado Ponderado', yaxis_title="Força do Momentum", height=350, template="plotly_white", margin=dict(l=20, r=20, t=40, b=20))
     st.plotly_chart(fig_mom, use_container_width=True)
+
+    st.divider()
+    
+    # --- IMPLEMENTAÇÃO 6: INDICADOR DE CLÍMAX DE VOLUME ---
+    st.header("Implementação 6: Indicador de Clímax de Agressão")
+    st.markdown("Identifica quando um pico de agressão é estatisticamente extremo (acima de +2σ), sinalizando um provável clímax de exaustão ou iniciação.")
+    st.latex(r''' \text{Clímax}_i = \frac{\text{Agressão}_i - \text{Média}(\text{Agressão}_i)}{\text{DesvioPadrão}(\text{Agressão}_i)} ''')
+    
+    buyer_climax_series = buyer_climax_zscore.tail(NUM_CANDLES_DISPLAY)
+    seller_climax_series = seller_climax_zscore.tail(NUM_CANDLES_DISPLAY)
+    fig_climax = go.Figure()
+    fig_climax.add_trace(go.Bar(x=buyer_climax_series.index, y=buyer_climax_series.values, name='Clímax Comprador', marker_color='green'))
+    fig_climax.add_trace(go.Bar(x=seller_climax_series.index, y=seller_climax_series.values, name='Clímax Vendedor', marker_color='red'))
+    fig_climax.add_hline(y=2, line_dash="dot", line_color="black", annotation_text="Limiar de Clímax (+2σ)")
+    fig_climax.update_layout(barmode='relative', title='Indicador de Clímax (Z-Score da Agressão)', yaxis_title="Desvios Padrão (σ)", height=350, template="plotly_white", margin=dict(l=20, r=20, t=40, b=20))
+    st.plotly_chart(fig_climax, use_container_width=True)
 
 
 with tab2:
@@ -278,6 +295,13 @@ with tab2:
         st.subheader("Saúde da Tendência")
         latest_momentum = {"Momentum Agregado": f"{aggregate_momentum_index.iloc[-1]:.2f}"}
         st.table(pd.DataFrame.from_dict(latest_momentum, orient='index', columns=['Valor Atual']))
+
+        st.subheader("Clímax de Agressão")
+        latest_climax = {
+            "Clímax Comprador": f"{buyer_climax_zscore.iloc[-1]:.2f} σ",
+            "Clímax Vendedor": f"{seller_climax_zscore.iloc[-1]:.2f} σ"
+        }
+        st.table(pd.DataFrame.from_dict(latest_climax, orient='index', columns=['Nível Atual']))
 
 st.caption("Feito com Streamlit • Dados via FinancialModelingPrep")
 
