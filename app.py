@@ -93,7 +93,7 @@ def calculate_atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int
 def calculate_zscore(series: pd.Series, window: int) -> pd.Series:
     return (series - series.rolling(window=window).mean()) / series.rolling(window=window).std()
 
-def calculate_breadth_metrics(asset_weights: dict, combined_data: pd.DataFrame, is_risk_on: bool):
+def calculate_breadth_metrics(asset_weights: dict, combined_data: pd.DataFrame):
     """Calcula todas as métricas de amplitude para uma cesta de ativos."""
     metrics = {}
     
@@ -107,33 +107,24 @@ def calculate_breadth_metrics(asset_weights: dict, combined_data: pd.DataFrame, 
         close_col, open_col, high_col, low_col = f"{s}_close", f"{s}_open", f"{s}_high", f"{s}_low"
         if close_col not in combined_data.columns: continue
 
+        # Condição de força é sempre a mesma: vela de alta
         strength_condition = (combined_data[close_col] > combined_data[open_col])
 
         # Agressão
         atr = calculate_atr(combined_data[high_col], combined_data[low_col], combined_data[close_col], ATR_PERIOD)
         is_high_energy = (combined_data[high_col] - combined_data[low_col]) / atr > ENERGY_THRESHOLD
         
-        # A lógica de comprador/vendedor depende da cesta
-        if is_risk_on: # Cesta Anti-Dólar, subida é força compradora
-             aggression_buyer += (strength_condition & is_high_energy).astype(int) * weight
-             aggression_seller += (~strength_condition & is_high_energy).astype(int) * weight
-        else: # Cesta Pró-Dólar, subida é força vendedora (anti-dólar)
-             aggression_seller += (strength_condition & is_high_energy).astype(int) * weight
-             aggression_buyer += (~strength_condition & is_high_energy).astype(int) * weight
+        aggression_buyer += (strength_condition & is_high_energy).astype(int) * weight
+        aggression_seller += (~strength_condition & is_high_energy).astype(int) * weight
         
         # Amplitude Ponderada
         for p in MA_PERIODS:
             ema_val = combined_data[close_col].ewm(span=p, adjust=False).mean()
             above_ema = (combined_data[close_col] > ema_val)
-            # A lógica de acima/abaixo depende da cesta
-            if is_risk_on: # Cesta Anti-Dólar
-                weighted_counts[p] += above_ema.astype(int) * weight
-            else: # Cesta Pró-Dólar
-                weighted_counts[p] += (~above_ema).astype(int) * weight # Abaixo da EMA = força anti-dólar
+            weighted_counts[p] += above_ema.astype(int) * weight
         
         # Momentum
         roc = combined_data[close_col].pct_change(periods=MOMENTUM_PERIOD)
-        if not is_risk_on: roc = -roc # Inverte para alinhar
         normalized_momentum = calculate_zscore(roc, MOMENTUM_Z_WINDOW)
         momentum_components.append(normalized_momentum * weight)
 
@@ -155,35 +146,29 @@ def calculate_breadth_metrics(asset_weights: dict, combined_data: pd.DataFrame, 
 def display_charts(column, metrics, title_prefix, theme_colors):
     """Exibe todos os gráficos para uma cesta de métricas em uma coluna do Streamlit."""
     column.header(title_prefix)
-
-    # Gráfico 1: Amplitude Ponderada (REMOVIDO CONFORME SOLICITADO)
-    # for p, series in metrics['weighted_counts'].items():
-    #     fig = go.Figure(go.Scatter(x=series.tail(NUM_CANDLES_DISPLAY).index, y=series.tail(NUM_CANDLES_DISPLAY).values, mode="lines", fill="tozeroy", line_color=theme_colors['main']))
-    #     fig.update_layout(title=f'Força Ponderada (EMA {p})', yaxis=dict(range=[0, 100]), height=250, margin=dict(t=30, b=10, l=10, r=10), template="plotly_dark")
-    #     column.plotly_chart(fig, use_container_width=True)
     
-    # Gráfico 2: Z-Score da Amplitude
+    # Gráfico 1: Z-Score da Amplitude
     for p, series in metrics['z_scores'].items():
         fig = go.Figure(go.Scatter(x=series.tail(NUM_CANDLES_DISPLAY).index, y=series.tail(NUM_CANDLES_DISPLAY).values, line=dict(color=theme_colors['accent'])))
-        fig.add_hline(y=2, line_dash="dot", line_color="red"); fig.add_hline(y=-2, line_dash="dot", line_color="green")
-        fig.update_layout(title=f'Nível de Extremo (Z-Score EMA {p})', yaxis=dict(range=[-3.5, 3.5]), height=250, margin=dict(t=30, b=10, l=10, r=10), template="plotly_dark")
+        fig.add_hline(y=2, line_dash="dot", line_color="white", opacity=0.5); fig.add_hline(y=-2, line_dash="dot", line_color="white", opacity=0.5)
+        fig.update_layout(title=f'Nível de Extremo (Z-Score EMA {p})', yaxis=dict(range=[-3.5, 3.5]), height=300, margin=dict(t=30, b=10, l=10, r=10), template="plotly_dark")
         column.plotly_chart(fig, use_container_width=True)
 
-    # Gráfico 3: Indicador de Clímax
+    # Gráfico 2: Indicador de Clímax
     buyer_series = metrics['buyer_climax_zscore'].tail(NUM_CANDLES_DISPLAY).clip(lower=0)
     seller_series = metrics['seller_climax_zscore'].tail(NUM_CANDLES_DISPLAY).clip(lower=0)
     fig = go.Figure()
-    fig.add_trace(go.Bar(x=buyer_series.index, y=buyer_series.values, name='Clímax Comprador', marker_color='green')) # Cor padronizada
-    fig.add_trace(go.Bar(x=seller_series.index, y=seller_series.values, name='Clímax Vendedor', marker_color='red')) # Cor padronizada
-    fig.add_hline(y=2, line_dash="dot", line_color="white")
-    fig.update_layout(barmode='relative', title='Indicador de Clímax de Agressão', height=250, margin=dict(t=30, b=10, l=10, r=10), template="plotly_dark")
+    fig.add_trace(go.Bar(x=buyer_series.index, y=buyer_series.values, name='Clímax Comprador', marker_color='green'))
+    fig.add_trace(go.Bar(x=seller_series.index, y=seller_series.values, name='Clímax Vendedor', marker_color='red'))
+    fig.add_hline(y=3, line_dash="dot", line_color="white", annotation_text="Limiar de Clímax (+3σ)")
+    fig.update_layout(barmode='relative', title='Indicador de Clímax de Agressão', height=300, margin=dict(t=30, b=10, l=10, r=10), template="plotly_dark")
     column.plotly_chart(fig, use_container_width=True)
 
-    # Gráfico 4: Índice de Momentum
+    # Gráfico 3: Índice de Momentum
     series = metrics['aggregate_momentum_index'].tail(NUM_CANDLES_DISPLAY)
     fig = go.Figure(go.Scatter(x=series.index, y=series.values, line=dict(color=theme_colors['momentum']), fill='tozeroy'))
     fig.add_hline(y=0, line_dash="dash", line_color="grey")
-    fig.update_layout(title='Índice de Momentum Agregado', height=250, margin=dict(t=30, b=10, l=10, r=10), template="plotly_dark")
+    fig.update_layout(title='Índice de Momentum Agregado', height=300, margin=dict(t=30, b=10, l=10, r=10), template="plotly_dark")
     column.plotly_chart(fig, use_container_width=True)
 
 
@@ -201,12 +186,12 @@ if combined.empty:
     st.stop()
 
 # --- Calcular métricas para ambas as cestas ---
-metrics_risk_off = calculate_breadth_metrics(RISK_OFF_ASSETS, combined, is_risk_on=False)
-metrics_risk_on = calculate_breadth_metrics(RISK_ON_ASSETS, combined, is_risk_on=True)
+metrics_risk_off = calculate_breadth_metrics(RISK_OFF_ASSETS, combined)
+metrics_risk_on = calculate_breadth_metrics(RISK_ON_ASSETS, combined)
 
 # --- Definição dos Temas de Cores ---
-risk_off_colors = {'main': '#E74C3C', 'accent': '#F1948A', 'climax_buyer': '#C0392B', 'climax_seller': '#F5B7B1', 'momentum': '#D98880'}
-risk_on_colors = {'main': '#2ECC71', 'accent': '#ABEBC6', 'climax_buyer': '#28B463', 'climax_seller': '#D5F5E3', 'momentum': '#76D7C4'}
+risk_off_colors = {'main': '#E74C3C', 'accent': '#F1948A', 'momentum': '#D98880'}
+risk_on_colors = {'main': '#2ECC71', 'accent': '#ABEBC6', 'momentum': '#76D7C4'}
 
 
 # --- Visualização ---
@@ -216,5 +201,4 @@ display_charts(col2, metrics_risk_on, "Risk-On (Fraqueza do Dólar)", risk_on_co
 
 
 st.caption("Feito com Streamlit • Dados via FinancialModelingPrep")
-
 
