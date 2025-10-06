@@ -47,6 +47,10 @@ st.sidebar.header("Parâmetros de Agressão")
 ATR_PERIOD = st.sidebar.slider("Período do ATR", 10, 30, 14)
 ENERGY_THRESHOLD = st.sidebar.slider("Limiar de 'Energia' da Vela", 1.0, 3.0, 1.5, 0.1)
 
+st.sidebar.header("Parâmetros de Momentum")
+MOMENTUM_PERIOD = st.sidebar.slider("Período do ROC (Momentum)", 10, 50, 21)
+MOMENTUM_Z_WINDOW = st.sidebar.slider("Janela Z-Score do Momentum", 50, 200, 100)
+
 # ===========================
 # Funções auxiliares
 # ===========================
@@ -102,29 +106,29 @@ def calculate_atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int
 st.title("Market Breadth: Força do Dólar")
 st.caption(f"Timeframe: {TIMEFRAME} | Última atualização: {datetime.now(TZ).strftime('%H:%M:%S')}")
 
-candles_to_fetch = (max(MA_PERIODS) if MA_PERIODS else 200) + NUM_CANDLES_DISPLAY + Z_SCORE_WINDOW
+candles_to_fetch = (max(MA_PERIODS) if MA_PERIODS else 200) + NUM_CANDLES_DISPLAY + Z_SCORE_WINDOW + MOMENTUM_Z_WINDOW
 combined = build_combined_data(ASSETS, TIMEFRAME, candles_to_fetch)
 
 if combined.empty:
     st.error("Nenhum dado disponível. Verifique a API ou os símbolos dos ativos.")
     st.stop()
 
-# --- Cálculos de EMAs, Condições, Agressão e Coesão ---
+# --- Cálculos de EMAs, Condições, Agressão e Momentum ---
 weighted_counts = {p: pd.Series(0.0, index=combined.index) for p in MA_PERIODS}
 aggression_buyer = pd.Series(0.0, index=combined.index)
 aggression_seller = pd.Series(0.0, index=combined.index)
-returns_cols = []
+momentum_components = []
 
 for s in ASSETS:
     close_col, open_col, high_col, low_col = f"{s}_close", f"{s}_open", f"{s}_high", f"{s}_low"
     if close_col not in combined.columns: continue
+    
+    weight = ASSET_WEIGHTS.get(s, 0)
 
     # Cálculo de Agressão
     atr = calculate_atr(combined[high_col], combined[low_col], combined[close_col], ATR_PERIOD)
     energy = (combined[high_col] - combined[low_col]) / atr
     is_high_energy = energy > ENERGY_THRESHOLD
-    weight = ASSET_WEIGHTS.get(s, 0)
-    
     aggression_buyer += ((combined[close_col] > combined[open_col]) & is_high_energy).astype(int) * weight
     aggression_seller += ((combined[close_col] < combined[open_col]) & is_high_energy).astype(int) * weight
 
@@ -135,14 +139,15 @@ for s in ASSETS:
         combined[above_col] = combined[close_col] > ema_val
         weighted_counts[p] += combined[above_col].astype(int) * weight
     
-    # Coleta de retornos para cálculo de coesão
-    returns_cols.append(combined[close_col].pct_change().rename(s))
+    # Cálculo de Momentum Individual Normalizado
+    roc = combined[close_col].pct_change(periods=MOMENTUM_PERIOD)
+    roc_mean = roc.rolling(window=MOMENTUM_Z_WINDOW).mean()
+    roc_std = roc.rolling(window=MOMENTUM_Z_WINDOW).std()
+    normalized_momentum = (roc - roc_mean) / roc_std
+    momentum_components.append(normalized_momentum.rename(s) * weight)
 
-# Cálculo de Coesão
-returns_df = pd.concat(returns_cols, axis=1)
-dispersion = returns_df.std(axis=1)
-cohesion_index = (1 / dispersion).rolling(window=20).mean() # Inverso da dispersão = coesão
-
+# Cálculo do Índice de Momentum Agregado
+aggregate_momentum_index = pd.concat(momentum_components, axis=1).sum(axis=1)
 
 # --- Cálculos de Z-Score, ROC e Aceleração ---
 z_scores, rocs, accelerations = {}, {}, {}
@@ -194,14 +199,12 @@ with tab1:
         p = MA_PERIODS[0] # Foco apenas na média mais curta
         st.markdown(f"Mede a dinâmica da Força Ponderada com base na **EMA {p}**. Picos indicam impulsos ou clímax. A desaceleração pode sinalizar exaustão.")
         
-        # Gráfico de Velocidade (ROC)
         roc_series = rocs[p].tail(NUM_CANDLES_DISPLAY)
         fig_roc = go.Figure()
         fig_roc.add_trace(go.Bar(x=roc_series.index, y=roc_series.values, name='ROC', marker_color=['green' if v >= 0 else 'red' for v in roc_series.values]))
         fig_roc.update_layout(title=f'Velocidade (ROC) da Amplitude', yaxis_title="Variação de Força", height=250, template="plotly_white", margin=dict(l=20, r=20, t=40, b=20))
         st.plotly_chart(fig_roc, use_container_width=True)
 
-        # Gráfico de Aceleração
         accel_series = accelerations[p].tail(NUM_CANDLES_DISPLAY)
         fig_accel = go.Figure()
         fig_accel.add_trace(go.Bar(x=accel_series.index, y=accel_series.values, name='Aceleração', marker_color=['#1f77b4' if v >= 0 else '#ff7f0e' for v in accel_series.values]))
@@ -221,35 +224,30 @@ with tab1:
     
     agg_buyer_series = aggression_buyer.tail(NUM_CANDLES_DISPLAY)
     agg_seller_series = aggression_seller.tail(NUM_CANDLES_DISPLAY)
-    
     fig_agg = go.Figure()
     fig_agg.add_trace(go.Bar(x=agg_buyer_series.index, y=agg_buyer_series.values, name='Agressão Compradora', marker_color='green'))
     fig_agg.add_trace(go.Bar(x=agg_seller_series.index, y=agg_seller_series.values, name='Agressão Vendedora', marker_color='red'))
-    fig_agg.update_layout(
-        barmode='relative', title='Clímax de Agressão Ponderado',
-        yaxis_title="Força da Agressão (0-100)",
-        height=350, template="plotly_white", margin=dict(l=20, r=20, t=40, b=20)
-    )
+    fig_agg.update_layout(barmode='relative', title='Clímax de Agressão Ponderado', yaxis_title="Força da Agressão (0-100)", height=350, template="plotly_white", margin=dict(l=20, r=20, t=40, b=20))
     st.plotly_chart(fig_agg, use_container_width=True)
     
     st.divider()
 
-    # --- IMPLEMENTAÇÃO 5: ÍNDICE DE COESÃO ---
-    st.header("Implementação 5: Índice de Coesão (Sentimento de Risco)")
-    st.markdown("Mede a correlação entre os ativos da cesta. Um pico indica que os ativos estão a mover-se em uníssono, sinalizando um sentimento de **Risk-Off** (medo).")
+    # --- IMPLEMENTAÇÃO 5: ÍNDICE DE MOMENTUM AGREGADO ---
+    st.header("Implementação 5: Índice de Momentum Agregado")
+    st.markdown("Mede a saúde da tendência. Calcula o momentum de cada ativo, normaliza-o estatisticamente (Z-Score) e agrega os resultados de forma ponderada. Um índice positivo e a subir indica um momentum de mercado forte e generalizado.")
     st.latex(r'''
-    \text{Coesão} = \frac{1}{\text{Desvio Padrão dos Retornos}}
+    \text{Momentum Normalizado}_i = \frac{\text{ROC}_i - \text{Média}(\text{ROC}_i)}{\text{DesvioPadrão}(\text{ROC}_i)}
+    ''')
+    st.latex(r'''
+    \text{Índice Agregado} = \sum_{i=1}^{N} (\text{Momentum Normalizado}_i \times \text{Peso}_i)
     ''')
 
-    cohesion_series = cohesion_index.tail(NUM_CANDLES_DISPLAY)
-    fig_coh = go.Figure()
-    fig_coh.add_trace(go.Scatter(x=cohesion_series.index, y=cohesion_series.values, name='Coesão', line=dict(color='teal'), fill='tozeroy'))
-    fig_coh.update_layout(
-        title='Índice de Coesão do Mercado',
-        yaxis_title="Nível de Coesão (Risk-Off)",
-        height=350, template="plotly_white", margin=dict(l=20, r=20, t=40, b=20)
-    )
-    st.plotly_chart(fig_coh, use_container_width=True)
+    momentum_series = aggregate_momentum_index.tail(NUM_CANDLES_DISPLAY)
+    fig_mom = go.Figure()
+    fig_mom.add_trace(go.Scatter(x=momentum_series.index, y=momentum_series.values, name='Momentum Agregado', line=dict(color='#636EFA'), fill='tozeroy'))
+    fig_mom.add_hline(y=0, line_dash="dash", line_color="grey")
+    fig_mom.update_layout(title='Índice de Momentum Agregado Ponderado', yaxis_title="Força do Momentum (Z-Score Ponderado)", height=350, template="plotly_white", margin=dict(l=20, r=20, t=40, b=20))
+    st.plotly_chart(fig_mom, use_container_width=True)
 
 
 with tab2:
@@ -262,10 +260,7 @@ with tab2:
         st.table(pd.DataFrame.from_dict(latest_counts_weighted, orient="index", columns=["Força Atual"]))
         
         st.subheader("Agressão Atual")
-        latest_aggression = {
-            "Agressão Compradora": f"{int(aggression_buyer.iloc[-1])}%",
-            "Agressão Vendedora": f"{int(aggression_seller.iloc[-1])}%"
-        }
+        latest_aggression = { "Agressão Compradora": f"{int(aggression_buyer.iloc[-1])}%", "Agressão Vendedora": f"{int(aggression_seller.iloc[-1])}%" }
         st.table(pd.DataFrame.from_dict(latest_aggression, orient="index", columns=["Força Atual"]))
 
     with col2:
@@ -276,17 +271,13 @@ with tab2:
         st.subheader("Dinâmica Atual")
         if MA_PERIODS:
             p = MA_PERIODS[0]
-            latest_dynamics = {
-                f"Velocidade (ROC EMA {p})": f"{rocs[p].iloc[-1]:.2f}",
-                f"Aceleração (EMA {p})": f"{accelerations[p].iloc[-1]:.2f}"
-            }
+            latest_dynamics = { f"Velocidade (ROC EMA {p})": f"{rocs[p].iloc[-1]:.2f}", f"Aceleração (EMA {p})": f"{accelerations[p].iloc[-1]:.2f}" }
             st.table(pd.DataFrame.from_dict(latest_dynamics, orient="index", columns=["Valor Atual"]))
 
     with col3:
-        st.subheader("Sentimento de Risco")
-        latest_cohesion = {"Índice de Coesão": f"{cohesion_index.iloc[-1]:.2f}"}
-        st.table(pd.DataFrame.from_dict(latest_cohesion, orient='index', columns=['Valor Atual']))
-
+        st.subheader("Saúde da Tendência")
+        latest_momentum = {"Momentum Agregado": f"{aggregate_momentum_index.iloc[-1]:.2f}"}
+        st.table(pd.DataFrame.from_dict(latest_momentum, orient='index', columns=['Valor Atual']))
 
 st.caption("Feito com Streamlit • Dados via FinancialModelingPrep")
 
