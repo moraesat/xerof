@@ -105,9 +105,12 @@ for s in ASSETS:
         ema_val = combined[close_col].ewm(span=p, adjust=False).mean()
         combined[above_col] = combined[close_col] > ema_val
 
-# --- Cálculos de Amplitude Ponderada e Z-Score ---
+# --- Cálculos de Amplitude, Z-Score, ROC e Aceleração ---
 weighted_counts = {}
 z_scores = {}
+rocs = {}
+accelerations = {}
+
 for p in MA_PERIODS:
     total_weight_series = pd.Series(0.0, index=combined.index)
     for s in ASSETS:
@@ -116,12 +119,19 @@ for p in MA_PERIODS:
             weight = ASSET_WEIGHTS.get(s, 0)
             total_weight_series += combined[above_col].astype(int) * weight
     
+    # Armazena a série ponderada
+    weighted_counts[p] = total_weight_series
+    
     # Cálculo do Z-Score
     mean = total_weight_series.rolling(window=Z_SCORE_WINDOW).mean()
     std = total_weight_series.rolling(window=Z_SCORE_WINDOW).std()
     z_scores[p] = (total_weight_series - mean) / std
     
-    weighted_counts[p] = total_weight_series
+    # Cálculo do ROC (Velocidade - 1ª Derivada)
+    rocs[p] = total_weight_series.diff()
+    
+    # Cálculo da Aceleração (2ª Derivada)
+    accelerations[p] = rocs[p].diff()
 
 
 # ===========================
@@ -132,7 +142,7 @@ tab1, tab2 = st.tabs(["📊 Gráficos", "📑 Resumo de Mercado"])
 with tab1:
     # --- MODELO PRINCIPAL: AMPLITUDE PONDERADA ---
     st.header("Modelo Principal: Amplitude Ponderada pela Liquidez")
-    st.markdown("Cada ativo contribui com o seu peso. O eixo Y vai de 0 a 100, representando a força total do sentimento do mercado.")
+    st.markdown("Mede a força total do sentimento do mercado, ponderada pela liquidez de cada ativo.")
 
     for p in MA_PERIODS:
         series = weighted_counts[p].tail(NUM_CANDLES_DISPLAY)
@@ -151,7 +161,7 @@ with tab1:
 
     # --- IMPLEMENTAÇÃO 2: Z-SCORE DA AMPLITUDE ---
     st.header("Implementação 2: Z-Score da Amplitude Ponderada")
-    st.markdown("Mede quão estatisticamente incomum (em desvios padrão) está a leitura atual da amplitude em relação à sua média recente. Valores acima de +2 ou abaixo de -2 indicam condições extremas.")
+    st.markdown("Mede quão estatisticamente incomum (em desvios padrão) está a leitura atual da amplitude.")
 
     for p in MA_PERIODS:
         series = z_scores[p].tail(NUM_CANDLES_DISPLAY)
@@ -166,19 +176,62 @@ with tab1:
         )
         st.plotly_chart(fig_z, use_container_width=True)
 
+    st.divider()
+
+    # --- IMPLEMENTAÇÃO 3: VELOCIDADE E ACELERAÇÃO ---
+    st.header("Implementação 3: Velocidade e Aceleração da Amplitude")
+    st.markdown("Mede a velocidade (1ª Derivada/ROC) e aceleração (2ª Derivada) da Força Ponderada. Picos indicam impulsos ou clímax. A desaceleração pode sinalizar exaustão.")
+
+    for p in MA_PERIODS:
+        # Gráfico de Velocidade (ROC)
+        roc_series = rocs[p].tail(NUM_CANDLES_DISPLAY)
+        fig_roc = go.Figure()
+        fig_roc.add_trace(go.Bar(x=roc_series.index, y=roc_series.values, name='ROC', marker_color=['green' if v >= 0 else 'red' for v in roc_series.values]))
+        fig_roc.update_layout(
+            title=f'Velocidade (ROC) da Amplitude (Base EMA {p})',
+            yaxis_title="Variação de Força",
+            height=250, template="plotly_white", margin=dict(l=20, r=20, t=40, b=20)
+        )
+        st.plotly_chart(fig_roc, use_container_width=True)
+
+        # Gráfico de Aceleração
+        accel_series = accelerations[p].tail(NUM_CANDLES_DISPLAY)
+        fig_accel = go.Figure()
+        fig_accel.add_trace(go.Bar(x=accel_series.index, y=accel_series.values, name='Aceleração', marker_color=['#1f77b4' if v >= 0 else '#ff7f0e' for v in accel_series.values]))
+        fig_accel.update_layout(
+            title=f'Aceleração da Amplitude (Base EMA {p})',
+            yaxis_title="Variação da Velocidade",
+            height=250, template="plotly_white", margin=dict(l=20, r=20, t=40, b=20)
+        )
+        st.plotly_chart(fig_accel, use_container_width=True)
+
+
 with tab2:
     st.header("Resumo Atual")
     
-    # --- Resumo Ponderado ---
-    st.subheader("Força Ponderada")
-    latest_counts_weighted = {f"EMA {p}": f"{int(weighted_counts[p].iloc[-1])}%" if not weighted_counts[p].empty else "0%" for p in MA_PERIODS}
-    st.metric("Força Máxima Possível", "100%")
-    st.table(pd.DataFrame.from_dict(latest_counts_weighted, orient="index", columns=["Força Atual"]))
+    # --- Resumo Ponderado e Z-Score ---
+    col1, col2 = st.columns(2)
+    with col1:
+        st.subheader("Força Ponderada")
+        latest_counts_weighted = {f"EMA {p}": f"{int(weighted_counts[p].iloc[-1])}%" for p in MA_PERIODS if not weighted_counts[p].empty}
+        st.table(pd.DataFrame.from_dict(latest_counts_weighted, orient="index", columns=["Força Atual"]))
+    with col2:
+        st.subheader("Z-Score")
+        latest_z_scores = {f"EMA {p}": f"{z_scores[p].iloc[-1]:.2f} σ" for p in MA_PERIODS if not z_scores[p].empty}
+        st.table(pd.DataFrame.from_dict(latest_z_scores, orient="index", columns=["Nível de Extremo Atual"]))
 
-    # --- Resumo Z-Score ---
-    st.subheader("Z-Score")
-    latest_z_scores = {f"EMA {p}": f"{z_scores[p].iloc[-1]:.2f} σ" if not z_scores[p].empty else "N/A" for p in MA_PERIODS}
-    st.table(pd.DataFrame.from_dict(latest_z_scores, orient="index", columns=["Nível de Extremo Atual"]))
+    # --- Resumo ROC e Aceleração ---
+    st.subheader("Dinâmica Atual (ROC & Aceleração)")
+    summary_data = {}
+    for p in MA_PERIODS:
+        if not rocs[p].empty and not accelerations[p].empty:
+            summary_data[f"EMA {p}"] = {
+                "Velocidade (ROC)": f"{rocs[p].iloc[-1]:.2f}",
+                "Aceleração": f"{accelerations[p].iloc[-1]:.2f}"
+            }
+    if summary_data:
+        st.table(pd.DataFrame.from_dict(summary_data, orient='index'))
+
 
 st.caption("Feito com Streamlit • Dados via FinancialModelingPrep")
 
