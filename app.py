@@ -20,21 +20,16 @@ st.set_page_config(
 API_KEY = "3CImfjoxNd98om3uhS89X4lmlp4Mrp3H" 
 TZ = pytz.timezone("America/Sao_Paulo")
 
-# --- CESTA DE ATIVOS FOCADA: FORÇA ANTI-DÓLAR ---
-# A lógica agora mede a força coordenada de vários ativos CONTRA o Dólar (USD).
-# Para pares USD/XXX, uma queda (close < open) significa força anti-dólar.
-# Para pares XXX/USD, uma subida (close > open) significa força anti-dólar.
-
-# Ativos onde a SUBIDA representa fraqueza do Dólar
+# --- CESTAS DE ATIVOS ---
+# Ativos onde a SUBIDA representa fraqueza do Dólar (Pesos ajustados para somar 100)
 ANTI_DOLLAR_ASSETS = {
-    'EURUSD': 24, 'GBPUSD': 10, 'AUDUSD': 6, 'NZDUSD': 2, 'XAUUSD': 8, 'XAGUSD': 3
+    'EURUSD': 45, 'GBPUSD': 19, 'AUDUSD': 11, 'NZDUSD': 4, 'XAUUSD': 15, 'XAGUSD': 6
 }
-# Ativos onde a QUEDA representa fraqueza do Dólar
+# Ativos onde a SUBIDA representa força do Dólar (Pesos ajustados para somar 100)
 PRO_DOLLAR_ASSETS = {
-    'USDJPY': 13, 'USDCHF': 4, 'USDCAD': 5, 'USDCNH': 4
+    'USDJPY': 50, 'USDCHF': 15, 'USDCAD': 20, 'USDCNH': 15
 }
-ALL_ASSETS = {**ANTI_DOLLAR_ASSETS, **PRO_DOLLAR_ASSETS}
-TOTAL_WEIGHT = sum(ALL_ASSETS.values())
+ALL_ASSETS_COMBINED = {**ANTI_DOLLAR_ASSETS, **PRO_DOLLAR_ASSETS}
 
 # Atualização automática
 st_autorefresh(interval=60 * 1000, key="refresh")
@@ -43,6 +38,12 @@ st_autorefresh(interval=60 * 1000, key="refresh")
 # MENU LATERAL (SIDEBAR)
 # =============================================================================
 st.sidebar.title("Configurações do Painel")
+
+ASSET_BASKET_CHOICE = st.sidebar.selectbox(
+    "Selecionar Cesta de Ativos",
+    ["Visão Combinada (Anti-Dólar)", "Força Anti-Dólar (XXX/USD)", "Força Pró-Dólar (USD/XXX)"]
+)
+
 TIMEFRAME = st.sidebar.radio(
     "Timeframe de Análise",
     ["5min", "15min"],
@@ -62,6 +63,22 @@ ATR_PERIOD = st.sidebar.slider("Período do ATR", 10, 30, 14)
 ENERGY_THRESHOLD = st.sidebar.slider("Limiar de 'Energia' da Vela", 1.0, 3.0, 1.5, 0.1)
 
 # =============================================================================
+# LÓGICA DE SELEÇÃO DE ATIVOS
+# =============================================================================
+if ASSET_BASKET_CHOICE == "Força Anti-Dólar (XXX/USD)":
+    selected_assets = ANTI_DOLLAR_ASSETS
+    dashboard_title = "🌊 Painel de Controlo: Força Anti-Dólar (Cesta XXX/USD)"
+    is_combined_view = False
+elif ASSET_BASKET_CHOICE == "Força Pró-Dólar (USD/XXX)":
+    selected_assets = PRO_DOLLAR_ASSETS
+    dashboard_title = "🌊 Painel de Controlo: Força Pró-Dólar (Cesta USD/XXX)"
+    is_combined_view = False
+else: # Visão Combinada
+    selected_assets = ALL_ASSETS_COMBINED
+    dashboard_title = "🌊 Painel de Controlo: Amplitude Combinada (Visão Anti-Dólar)"
+    is_combined_view = True
+
+# =============================================================================
 # FUNÇÕES DE BUSCA E PROCESSAMENTO DE DADOS
 # =============================================================================
 
@@ -78,8 +95,8 @@ def get_single_pair_data(symbol: str, timeframe: str) -> pd.DataFrame | None:
 
         df = pd.DataFrame(data).iloc[::-1]
         df['date'] = pd.to_datetime(df['date'])
-        # CORREÇÃO DE TIMEZONE: Localiza os dados como UTC e converte para o fuso horário de São Paulo
-        df['date'] = df['date'].dt.tz_localize('UTC').dt.tz_convert(TZ)
+        # CORREÇÃO DE TIMEZONE: Localiza os dados como 'US/Eastern' (fuso de NY) e converte para São Paulo.
+        df['date'] = df['date'].dt.tz_localize('US/Eastern').dt.tz_convert(TZ)
         df = df.set_index('date')
         df = df[['open', 'high', 'low', 'close', 'volume']].apply(pd.to_numeric)
         return df.tail(candles_to_fetch)
@@ -114,70 +131,65 @@ def calculate_atr(df: pd.DataFrame, period: int) -> pd.Series:
 # =============================================================================
 # ESTRUTURA PRINCIPAL DA APLICAÇÃO
 # =============================================================================
-st.title("🌊 Painel de Controlo de Amplitude Intraday: Força Anti-Dólar")
+st.title(dashboard_title)
 last_update_time = datetime.now(TZ).strftime('%H:%M:%S')
-st.caption(f"Analisando {len(ALL_ASSETS)} pares no timeframe de {TIMEFRAME} | Última atualização: {last_update_time} (Horário de Brasília)")
+st.caption(f"Analisando {len(selected_assets)} pares no timeframe de {TIMEFRAME} | Última atualização: {last_update_time} (Horário de Brasília)")
 
-all_data = fetch_all_data_parallel(list(ALL_ASSETS.keys()), TIMEFRAME)
+all_data = fetch_all_data_parallel(list(selected_assets.keys()), TIMEFRAME)
 
 if not all_data:
     st.error("Não foi possível obter dados de mercado. A API pode estar indisponível. Tente novamente.")
     st.stop()
 
 # --- Cálculos dos Painéis ---
-# PAINEL 1: Força Central (Amplitude Ponderada Anti-Dólar)
 breadth_components = []
-for symbol, df in all_data.items():
-    weight = ALL_ASSETS.get(symbol, 0)
-    if symbol in ANTI_DOLLAR_ASSETS:
-        # Para EURUSD, etc., subida é força anti-dólar
-        condition = (df['close'] > df['open']).astype(int) * weight
-    else: # PRO_DOLLAR_ASSETS
-        # Para USDJPY, etc., queda é força anti-dólar
-        condition = (df['close'] < df['open']).astype(int) * weight
-    breadth_components.append(condition.rename(symbol))
-    
-breadth_weighted = pd.concat(breadth_components, axis=1).sum(axis=1)
+aggression_buyer_components = []
+aggression_seller_components = []
+returns_components = []
 
-# Z-Score
+for symbol, df in all_data.items():
+    weight = selected_assets.get(symbol, 0)
+    
+    # --- Lógica de Força ---
+    if is_combined_view:
+        if symbol in ANTI_DOLLAR_ASSETS:
+            strength_condition = (df['close'] > df['open'])
+        else: # PRO_DOLLAR_ASSETS
+            strength_condition = (df['close'] < df['open']) # Invertido para visão anti-dólar
+    else: # Visão de Cesta Simples
+        strength_condition = (df['close'] > df['open'])
+        
+    breadth_components.append(strength_condition.astype(int).rename(symbol) * weight)
+    
+    # --- Lógica de Agressão ---
+    df['atr'] = calculate_atr(df, ATR_PERIOD)
+    df['energy'] = (df['high'] - df['low']) / df['atr']
+    is_high_energy = df['energy'] > ENERGY_THRESHOLD
+    
+    buyer_aggression = (strength_condition & is_high_energy).astype(int) * weight
+    seller_aggression = (~strength_condition & is_high_energy).astype(int) * weight
+    aggression_buyer_components.append(buyer_aggression.rename(symbol))
+    aggression_seller_components.append(seller_aggression.rename(symbol))
+
+    # --- Lógica de Retornos (para Coesão) ---
+    ret = df['close'].pct_change()
+    if is_combined_view and symbol in PRO_DOLLAR_ASSETS:
+        ret = -ret
+    returns_components.append(ret)
+
+# PAINEL 1: Força Central
+breadth_weighted = pd.concat(breadth_components, axis=1).sum(axis=1)
 breadth_mean = breadth_weighted.rolling(window=Z_SCORE_WINDOW).mean()
 breadth_std = breadth_weighted.rolling(window=Z_SCORE_WINDOW).std()
 breadth_zscore = (breadth_weighted - breadth_mean) / breadth_std
 
 # PAINEL 2: Agressão e Velocidade
-aggression_buyer_anti_usd = []
-aggression_seller_anti_usd = []
-for symbol, df in all_data.items():
-    weight = ALL_ASSETS.get(symbol, 0)
-    df['atr'] = calculate_atr(df, ATR_PERIOD)
-    df['energy'] = (df['high'] - df['low']) / df['atr']
-    is_high_energy = df['energy'] > ENERGY_THRESHOLD
-
-    if symbol in ANTI_DOLLAR_ASSETS:
-        buyer_agg = ((df['close'] > df['open']) & is_high_energy).astype(int) * weight
-        seller_agg = ((df['close'] < df['open']) & is_high_energy).astype(int) * weight
-    else: # PRO_DOLLAR_ASSETS
-        buyer_agg = ((df['close'] < df['open']) & is_high_energy).astype(int) * weight
-        seller_agg = ((df['close'] > df['open']) & is_high_energy).astype(int) * weight
-        
-    aggression_buyer_anti_usd.append(buyer_agg.rename(symbol))
-    aggression_seller_anti_usd.append(seller_agg.rename(symbol))
-    
-aggression_buyer = pd.concat(aggression_buyer_anti_usd, axis=1).sum(axis=1)
-aggression_seller = pd.concat(aggression_seller_anti_usd, axis=1).sum(axis=1)
-    
-# ROC
+aggression_buyer = pd.concat(aggression_buyer_components, axis=1).sum(axis=1)
+aggression_seller = pd.concat(aggression_seller_components, axis=1).sum(axis=1)
 breadth_roc = breadth_weighted.diff()
 
 # PAINEL 3: Ambiente de Risco (RORO)
-returns = []
-for symbol, df in all_data.items():
-    ret = df['close'].pct_change()
-    if symbol in PRO_DOLLAR_ASSETS:
-        ret = -ret # Inverte o retorno para alinhar com a ótica anti-dólar
-    returns.append(ret)
-    
-returns_df = pd.concat(returns, axis=1)
+returns_df = pd.concat(returns_components, axis=1)
 dispersion = returns_df.std(axis=1)
 cohesion_index = (1 / dispersion).rolling(window=20).mean()
 
@@ -197,7 +209,7 @@ with col1:
     st.subheader("Motor: Força Central")
     fig1 = go.Figure()
     fig1.add_trace(go.Scatter(x=breadth_weighted_display.index, y=breadth_weighted_display.values, name='Amplitude Ponderada', line=dict(color='royalblue', width=2)))
-    fig1.update_layout(title='Força Ponderada Anti-Dólar', height=300, margin=dict(l=20, r=20, t=40, b=20), showlegend=False)
+    fig1.update_layout(title='Força Ponderada da Cesta', height=300, margin=dict(l=20, r=20, t=40, b=20), showlegend=False)
     st.plotly_chart(fig1, use_container_width=True)
     
     fig_z = go.Figure()
@@ -210,8 +222,8 @@ with col1:
 with col2:
     st.subheader("Tacómetro: Agressão")
     fig2 = go.Figure()
-    fig2.add_trace(go.Bar(x=aggression_buyer_display.index, y=aggression_buyer_display.values, name='Agressão Anti-Dólar', marker_color='green'))
-    fig2.add_trace(go.Bar(x=aggression_seller_display.index, y=aggression_seller_display.values, name='Agressão Pró-Dólar', marker_color='red'))
+    fig2.add_trace(go.Bar(x=aggression_buyer_display.index, y=aggression_buyer_display.values, name='Agressão Compradora', marker_color='green'))
+    fig2.add_trace(go.Bar(x=aggression_seller_display.index, y=aggression_seller_display.values, name='Agressão Vendedora', marker_color='red'))
     fig2.update_layout(barmode='relative', title='Clímax de Agressão Ponderado', height=300, margin=dict(l=20, r=20, t=40, b=20), showlegend=False)
     st.plotly_chart(fig2, use_container_width=True)
 
@@ -227,4 +239,5 @@ with col3:
     fig3.add_trace(go.Scatter(x=cohesion_index_display.index, y=cohesion_index_display.values, name='Coesão', line=dict(color='teal')))
     fig3.update_layout(title='Índice de Coesão (Medo Risk-Off)', height=300, margin=dict(l=20, r=20, t=40, b=20), showlegend=False)
     st.plotly_chart(fig3, use_container_width=True)
+
 
