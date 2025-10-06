@@ -1,4 +1,3 @@
-# app.py
 import pandas as pd
 import pytz
 import requests
@@ -6,194 +5,214 @@ import streamlit as st
 import plotly.graph_objs as go
 from datetime import datetime
 from streamlit_autorefresh import st_autorefresh
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import numpy as np
 
-# ===========================
-# Configurações principais
-# ===========================
-st.set_page_config(page_title="Market Breadth",
-                   layout="wide", page_icon="📈")
-API_KEY = "3CImfjoxNd98om3uhS89X4lmlp4Mrp3H"
+# =============================================================================
+# CONFIGURAÇÕES GLOBAIS E CONSTANTES
+# =============================================================================
+st.set_page_config(
+    page_title="Intraday Forex Breadth Dashboard",
+    layout="wide",
+    page_icon="🌊"
+)
+
+API_KEY = "3CImfjoxNd98om3uhS89X4lmlp4Mrp3H" 
 TZ = pytz.timezone("America/Sao_Paulo")
-ASSETS = ["USDJPY", "USDCHF", "USDCAD", "USDNOK", "USDSEK", "USDCNH", "USDZAR", "USDCZK", "USDDKK", "USDSGD", "USDPLN",
-          "USDMXN", "USDHKD", "USDHUF", "DX-Y.NYB"]
-#['AUDUSD', 'CADUSD', 'CHFUSD', 'CNHUSD', 'CZKUSD', 'DKKUSD', 'EURUSD',
-          #'GBPUSD', 'HUFUSD', 'HKDUSD', 'JPYUSD', 'NOKUSD', 'NZDUSD', 'PLNUSD',
-          #'SEKUSD', 'SGDUSD', 'TRYUSD', 'XAUUSD', 'XAGUSD', 'ZARUSD']
-NUM_CANDLES = 120  # últimos 120 candles
-TOTAL_ASSETS = len(ASSETS)
-LOWER_LINE = round(TOTAL_ASSETS * 0.1)
-UPPER_LINE = round(TOTAL_ASSETS * 0.9)
 
-# Atualização automática a cada 60s
-st_autorefresh(interval=60 * 1000, key="refresh")
+# --- LISTA DE PARES DE FOREX E SEUS PESOS DE LIQUIDEZ (Baseado no volume de negociação global) ---
+# Fonte: BIS Triennial Central Bank Survey
+FOREX_PAIRS_WEIGHTS = {
+    'EURUSD': 24, 'USDJPY': 13, 'GBPUSD': 10, 'AUDUSD': 6, 'USDCAD': 5,
+    'USDCNH': 4, 'USDCHF': 4, 'NZDUSD': 2, 'USDSEK': 1, 'USDNOK': 1,
+    'USDSGD': 1, 'USDMXN': 1, 'USDZAR': 1, 'EURJPY': 3, 'EURGBP': 2,
+    'AUDJPY': 2, 'CADJPY': 1, 'CHFJPY': 1
+}
+TOTAL_WEIGHT = sum(FOREX_PAIRS_WEIGHTS.values())
 
-# ===========================
-# Menu lateral
-# ===========================
-st.sidebar.title("Configurações")
-MA_INPUT = st.sidebar.text_input(
-    "Períodos", "9,21,72,200")
-MA_PERIODS = [int(x.strip())
-              for x in MA_INPUT.split(",") if x.strip().isdigit()]
+# Atualização automática
+st_autorefresh(interval=60 * 1000, key="refresh") # Atualiza a cada 60 segundos
 
-TIMEFRAME = st.sidebar.radio("Timeframe", ["1min", "5min", "15min", "1h"])
-if TIMEFRAME == "1min":
-    BASE_URL = "https://financialmodelingprep.com/stable/historical-chart/1min"
-elif TIMEFRAME == "5min":
-    BASE_URL = "https://financialmodelingprep.com/stable/historical-chart/5min"
-elif TIMEFRAME == "15min":
-    BASE_URL = "https://financialmodelingprep.com/stable/historical-chart/15min"
-else:
-    BASE_URL = "https://financialmodelingprep.com/stable/historical-chart/1hour"
+# =============================================================================
+# MENU LATERAL (SIDEBAR)
+# =============================================================================
+st.sidebar.title("Configurações do Painel")
+TIMEFRAME = st.sidebar.radio(
+    "Timeframe de Análise",
+    ["5min", "15min"],
+    index=0,
+    captions=["Alta Frequência", "Média Frequência"]
+)
 
-# ===========================
-# Funções auxiliares
-# ===========================
+st.sidebar.header("Parâmetros dos Indicadores")
+Z_SCORE_WINDOW = st.sidebar.slider("Janela do Z-Score", 50, 500, 200)
+ATR_PERIOD = st.sidebar.slider("Período do ATR", 10, 30, 14)
+ENERGY_THRESHOLD = st.sidebar.slider("Limiar de 'Energia' da Vela", 1.0, 3.0, 1.5, 0.1)
+EMA_DIST_PERIOD = st.sidebar.slider("Período da EMA (Distribuição)", 50, 200, 200)
 
+# =============================================================================
+# FUNÇÕES DE BUSCA E PROCESSAMENTO DE DADOS
+# =============================================================================
 
 @st.cache_data(ttl=60)
-def get_data(symbol: str, base_url: str) -> pd.DataFrame | None:
+def get_single_pair_data(symbol: str, timeframe: str) -> pd.DataFrame | None:
+    """Busca dados OHLCV para um único par de moedas."""
+    candles_to_fetch = 500 # Puxar um histórico maior para cálculos de Z-score e EMA
     try:
-        r = requests.get(
-            f"{base_url}?symbol={symbol}&apikey={API_KEY}", timeout=10)
-        if r.status_code != 200:
-            return None
-        j = r.json()
-        if not j:
-            return None
-        df = pd.DataFrame(j)
-        df["date"] = pd.to_datetime(df["date"])
-        # Corrigir fuso: soma 1 hora para ajustar BRT
-        df["date"] = df["date"] + pd.Timedelta(hours=1)
-        df = df.set_index("date").sort_index()
-        df = df.tail(NUM_CANDLES)
-        return df
+        base_url = f"https://financialmodelingprep.com/api/v3/historical-chart/{timeframe}/{symbol}"
+        r = requests.get(base_url, params={"apikey": API_KEY}, timeout=15)
+        if r.status_code != 200: return None
+        data = r.json()
+        if not data: return None
+
+        df = pd.DataFrame(data).iloc[::-1] # API retorna do mais recente para o mais antigo
+        df['date'] = pd.to_datetime(df['date'])
+        df['date'] = df['date'].dt.tz_localize('UTC').dt.tz_convert(TZ)
+        df = df.set_index('date')
+        df = df[['open', 'high', 'low', 'close', 'volume']].apply(pd.to_numeric)
+        return df.tail(candles_to_fetch)
     except Exception:
         return None
 
+def fetch_all_data_parallel(symbols: list, timeframe: str) -> dict:
+    """Busca dados para todos os símbolos em paralelo para acelerar o carregamento."""
+    data = {}
+    with ThreadPoolExecutor(max_workers=20) as executor:
+        future_to_symbol = {executor.submit(get_single_pair_data, symbol, timeframe): symbol for symbol in symbols}
+        for future in as_completed(future_to_symbol):
+            symbol = future_to_symbol[future]
+            try:
+                result = future.result()
+                if result is not None and not result.empty:
+                    data[symbol] = result
+            except Exception:
+                pass
+    return data
 
-def build_combined_close(symbols, base_url):
-    frames = []
-    for s in symbols:
-        df = get_data(s, base_url)
-        if df is None or df.empty:
-            continue
-        frames.append(df["close"].rename(f"{s}_Close"))
-    if not frames:
-        return pd.DataFrame()
-    combined = pd.concat(frames, axis=1)
-    return combined
+def calculate_atr(df: pd.DataFrame, period: int) -> pd.Series:
+    """Calcula o Average True Range (ATR)."""
+    high_low = df['high'] - df['low']
+    high_close = np.abs(df['high'] - df['close'].shift())
+    low_close = np.abs(df['low'] - df['close'].shift())
+    ranges = pd.concat([high_low, high_close, low_close], axis=1)
+    true_range = np.max(ranges, axis=1)
+    return true_range.rolling(window=period).mean()
 
+# =============================================================================
+# ESTRUTURA PRINCIPAL DA APLICAÇÃO
+# =============================================================================
+st.title("🌊 Painel de Controlo de Amplitude Intraday para Forex")
+st.caption(f"Analisando {len(FOREX_PAIRS_WEIGHTS)} pares no timeframe de {TIMEFRAME} | Última atualização: {datetime.now(TZ).strftime('%H:%M:%S')}")
 
-# ===========================
-# Tabs
-# ===========================
-tab1, tab2 = st.tabs(["📊 Gráficos", "📑 Resumo de Mercado"])
+# --- Busca e Preparação dos Dados ---
+with st.spinner("A buscar e a processar dados de mercado em tempo real..."):
+    all_data = fetch_all_data_parallel(list(FOREX_PAIRS_WEIGHTS.keys()), TIMEFRAME)
 
-# ===========================
-# TAB 1 — Gráficos
-# ===========================
-with tab1:
-    st.title("Market Breadth")
-    st.caption(
-        f"Períodos configuráveis — Timeframe: {TIMEFRAME} — Últimos {NUM_CANDLES} candles")
-
-    with st.spinner(f"Buscando dados {TIMEFRAME}..."):
-        combined = build_combined_close(ASSETS, BASE_URL)
-
-    if combined.empty:
-        st.error("Nenhum dado disponível.")
+    if not all_data:
+        st.error("Não foi possível obter dados de mercado. A API pode estar indisponível. Tente novamente em breve.")
         st.stop()
 
-    # Calcular EMAs e flags "acima"
-    for s in ASSETS:
-        close_col = f"{s}_Close"
-        if close_col not in combined.columns:
-            continue
-        for p in MA_PERIODS:
-            ema_col = f"{s}_EMA{p}"
-            above_col = f"{s}_Above_EMA{p}"
-            combined[ema_col] = combined[close_col].ewm(
-                span=p, adjust=False).mean()
-            combined[above_col] = combined[close_col] > combined[ema_col]
+    # --- Cálculos dos Painéis ---
 
-    # Contagem de ativos acima de cada EMA
-    counts = {}
-    for p in MA_PERIODS:
-        filtered_cols = combined.filter(like=f"_Above_EMA{p}")
-        if filtered_cols.empty:
-            counts[p] = pd.Series(dtype=int)
-        else:
-            counts[p] = filtered_cols.sum(axis=1)
+    # PAINEL 1: Força Central
+    breadth_weighted_values = []
+    for symbol, df in all_data.items():
+        weight = FOREX_PAIRS_WEIGHTS.get(symbol, 0)
+        condition = (df['close'] > df['open']).astype(int) * weight
+        breadth_weighted_values.append(condition.rename(symbol))
+    
+    breadth_weighted = pd.concat(breadth_weighted_values, axis=1).sum(axis=1)
+    
+    # Z-Score
+    breadth_mean = breadth_weighted.rolling(window=Z_SCORE_WINDOW).mean()
+    breadth_std = breadth_weighted.rolling(window=Z_SCORE_WINDOW).std()
+    breadth_zscore = (breadth_weighted - breadth_mean) / breadth_std
 
-    # Gráficos empilhados verticalmente
-    now_local = datetime.now(TZ)
-    for idx, p in enumerate(MA_PERIODS):
-        series = counts[p]
-        fig = go.Figure()
-        if not series.empty:
-            # Linha principal suave com sombreamento
-            fig.add_trace(go.Scatter(
-                x=series.index,
-                y=series.values,
-                mode="lines",
-                line=dict(
-                    width=2, color=f"rgb({50+idx*60},{100+idx*30},{200-idx*50})"),
-                fill="tozeroy",
-                fillcolor=f"rgba({50+idx*60},{100+idx*30},{200-idx*50},0.1)"
-            ))
-            # Último ponto destacado
-            fig.add_trace(go.Scatter(
-                x=[series.index[-1]],
-                y=[series.values[-1]],
-                mode="markers+text",
-                text=[series.values[-1]],
-                textposition="top right",
-                marker=dict(size=10, color="red")
-            ))
-        # Linhas horizontais discretas adaptadas ao total de ativos
-        fig.add_hline(y=LOWER_LINE, line_dash="dot", line_color="gray",
-                      annotation_text=f"{LOWER_LINE}", annotation_position="bottom right")
-        fig.add_hline(y=UPPER_LINE, line_dash="dot", line_color="gray",
-                      annotation_text=f"{UPPER_LINE}", annotation_position="bottom right")
-        fig.update_layout(
-            template="plotly_white",
-            height=350,
-            title=dict(
-                text=f"{p} — Última atualização: {now_local.strftime('%H:%M:%S')}", font=dict(size=14)),
-            margin=dict(l=10, r=10, t=40, b=20),
-            xaxis=dict(title="Data/Hora (BRT)", showgrid=False, nticks=8),
-            yaxis=dict(title="Ativos acima", showgrid=False,
-                       gridcolor="rgba(200,200,200,0.3)", dtick=1, rangemode="tozero")
-        )
-        st.plotly_chart(fig, use_container_width=True)
+    # PAINEL 2: Agressão e Velocidade
+    aggression_buyer = []
+    aggression_seller = []
+    for symbol, df in all_data.items():
+        weight = FOREX_PAIRS_WEIGHTS.get(symbol, 0)
+        df['atr'] = calculate_atr(df, ATR_PERIOD)
+        df['energy'] = (df['high'] - df['low']) / df['atr']
+        
+        is_buyer_aggression = ((df['close'] > df['open']) & (df['energy'] > ENERGY_THRESHOLD)).astype(int) * weight
+        is_seller_aggression = ((df['close'] < df['open']) & (df['energy'] > ENERGY_THRESHOLD)).astype(int) * weight
+        
+        aggression_buyer.append(is_buyer_aggression.rename(symbol))
+        aggression_seller.append(is_seller_aggression.rename(symbol))
+        
+    aggression_buyer_weighted = pd.concat(aggression_buyer, axis=1).sum(axis=1)
+    aggression_seller_weighted = pd.concat(aggression_seller, axis=1).sum(axis=1)
+    
+    # ROC
+    breadth_roc = breadth_weighted.diff()
 
-# ===========================
-# TAB 2 — Resumo de Mercado
-# ===========================
-with tab2:
-    st.subheader("Resumo atual")
-    latest_counts = {f"EMA{p}": int(
-        counts[p].iloc[-1]) if not counts[p].empty else 0 for p in MA_PERIODS}
-    st.table(pd.DataFrame.from_dict(latest_counts,
-             orient="index", columns=["Ativos acima"]))
-
-    st.subheader("Ativos atualmente acima de cada EMA")
-    latest_row = combined.iloc[-1] if not combined.empty else pd.Series()
-    for p in MA_PERIODS:
-        above_cols = [
-            c for c in combined.columns if c.endswith(f"_Above_EMA{p}")]
-        currently = [c.replace("_Above_EMA" + str(p), "")
-                     for c in above_cols if latest_row.get(c, False)]
-        st.markdown(f"**EMA{p}** — {len(currently)} pares")
-        if currently:
-            st.write(", ".join(currently))
-        else:
-            st.write("_Nenhum par acima desta EMA no momento_")
-
-    st.caption("Feito com Streamlit • Dados via FinancialModelingPrep")
+    # PAINEL 3: Ambiente de Risco (RORO)
+    returns = pd.concat([df['close'].pct_change() for df in all_data.values()], axis=1)
+    dispersion = returns.std(axis=1)
+    cohesion_index = (1 / dispersion).rolling(window=20).mean() # Inverso da dispersão = coesão
+    
+    # Distribuição
+    dist_from_ema = []
+    for symbol, df in all_data.items():
+        ema = df['close'].ewm(span=EMA_DIST_PERIOD, adjust=False).mean()
+        dist = ((df['close'] - ema) / ema) * 100
+        dist_from_ema.append(dist.iloc[-1])
 
 
+# --- Visualização dos Painéis ---
+col1, col2, col3 = st.columns(3)
 
+with col1:
+    st.header("Motor: Força Central")
+    
+    fig1 = go.Figure()
+    fig1.add_trace(go.Scatter(x=breadth_weighted.index, y=breadth_weighted.values, name='Amplitude Ponderada', line=dict(color='royalblue', width=2)))
+    fig1.update_layout(title='Amplitude Ponderada pela Liquidez ($BREADTH_W)', yaxis_title='Força Ponderada', height=300, margin=dict(l=20, r=20, t=40, b=20))
+    st.plotly_chart(fig1, use_container_width=True)
+    
+    fig_z = go.Figure()
+    fig_z.add_trace(go.Scatter(x=breadth_zscore.index, y=breadth_zscore.values, name='Z-Score', line=dict(color='orange')))
+    fig_z.add_hline(y=2, line_dash="dash", line_color="red", annotation_text="Extremo de Euforia")
+    fig_z.add_hline(y=-2, line_dash="dash", line_color="green", annotation_text="Extremo de Pânico")
+    fig_z.update_layout(title='Z-Score do $BREADTH_W (Nível de Extremo)', yaxis_title='Desvios Padrão', height=300, margin=dict(l=20, r=20, t=40, b=20))
+    st.plotly_chart(fig_z, use_container_width=True)
 
+with col2:
+    st.header("Tacómetro: Agressão")
+    
+    fig2 = go.Figure()
+    fig2.add_trace(go.Bar(x=aggression_buyer_weighted.index, y=aggression_buyer_weighted.values, name='Agressão Compradora', marker_color='green'))
+    fig2.add_trace(go.Bar(x=aggression_seller_weighted.index, y=aggression_seller_weighted.values, name='Agressão Vendedora', marker_color='red'))
+    fig2.update_layout(barmode='stack', title='Clímax de Agressão Ponderado (Energia)', yaxis_title='Força da Agressão', height=300, margin=dict(l=20, r=20, t=40, b=20), showlegend=False)
+    st.plotly_chart(fig2, use_container_width=True)
+
+    fig_roc = go.Figure()
+    fig_roc.add_trace(go.Scatter(x=breadth_roc.index, y=breadth_roc, name='ROC', line=dict(color='purple'), fill='tozeroy'))
+    fig_roc.add_hline(y=0, line_dash="dash", line_color="grey")
+    fig_roc.update_layout(title='Velocidade da Amplitude (ROC)', yaxis_title='Variação', height=300, margin=dict(l=20, r=20, t=40, b=20))
+    st.plotly_chart(fig_roc, use_container_width=True)
+    
+with col3:
+    st.header("Radar: Ambiente RORO")
+    
+    fig3 = go.Figure()
+    fig3.add_trace(go.Scatter(x=cohesion_index.index, y=cohesion_index.values, name='Coesão', line=dict(color='teal')))
+    fig3.update_layout(title='Índice de Coesão (Medo Risk-Off)', yaxis_title='Coesão (1 / Dispersão)', height=300, margin=dict(l=20, r=20, t=40, b=20))
+    st.plotly_chart(fig3, use_container_width=True)
+
+    fig_dist = go.Figure()
+    fig_dist.add_trace(go.Histogram(x=dist_from_ema, name='Distribuição', marker_color='darkgrey'))
+    fig_dist.add_vline(x=0, line_dash="dash", line_color="blue", annotation_text=f"EMA {EMA_DIST_PERIOD}")
+    fig_dist.update_layout(title=f'Perfil de Distribuição vs EMA {EMA_DIST_PERIOD}', xaxis_title='% de Distância da EMA', height=300, margin=dict(l=20, r=20, t=40, b=20))
+    st.plotly_chart(fig_dist, use_container_width=True)
+
+# --- Guia de Interpretação ---
+st.header("Guia Rápido de Interpretação")
+st.markdown("""
+- **Sinal de Reversão para Compra (Fundo):** Procure por um **Z-Score < -2** (Pânico) acompanhado de um **pico na Agressão Vendedora** (Clímax) e um **pico no Índice de Coesão** (Medo RORO). O gatilho de timing ocorre quando a Agressão Vendedora desaparece e o ROC começa a subir.
+- **Sinal de Reversão para Venda (Topo):** Procure por um **Z-Score > +2** (Euforia) com um **pico na Agressão Compradora**. A fraqueza é confirmada quando o **ROC começa a cair** mesmo com a amplitude ainda alta (divergência de velocidade).
+- **Análise de Contexto:** O **Perfil de Distribuição** mostra a saúde da tendência. Uma distribuição deslocada para a direita confirma a força geral, enquanto um recuo da mediana pode sinalizar fraqueza interna.
+""")
 
