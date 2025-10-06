@@ -19,15 +19,15 @@ TZ = pytz.timezone("America/Sao_Paulo")
 # --- CESTAS DE ATIVOS E PESOS ---
 # Cesta Risk-Off: Mede a força do Dólar (USD/XXX). Pesos somam 100.
 RISK_OFF_ASSETS = {
-    'DX-Y.NYB': 20, 'USDJPY': 20, 'USDCHF': 10, 'USDCAD': 10, 'USDCNH': 10,
-    'USDSEK': 5,  'USDNOK': 5,  'USDMXN': 5,  'USDSGD': 5,  'USDZAR': 2,
-    'USDHKD': 2,  'USDPLN': 2,  'USDCZK': 1,  'USDDKK': 1,  'USDHUF': 1
+    'DX-Y.NYB': 1, 'USDJPY': 1, 'USDCHF': 1, 'USDCAD': 1, 'USDCNH': 1,
+    'USDSEK': 1,  'USDNOK': 1,  'USDMXN': 1,  'USDSGD': 1,  'USDZAR': 1,
+    'USDHKD':1,  'USDPLN':1,  'USDCZK': 1,  'USDDKK': 1,  'USDHUF': 1
 }
 
 # Cesta Risk-On: Mede a fraqueza do Dólar (XXX/USD). Pesos somam 100.
 RISK_ON_ASSETS = {
-    'EURUSD': 27, 'JPYUSD': 14, 'GBPUSD': 11, 'AUDUSD': 7, 'CADUSD': 6,
-    'CNYUSD': 4,  'CHFUSD': 4,  'XAUUSD': 17, 'XAGUSD': 6, 'NZDUSD': 2,
+    'EURUSD': 1, 'JPYUSD': 1, 'GBPUSD': 1, 'AUDUSD': 1, 'CADUSD': 1,
+    'CNYUSD': 1,  'CHFUSD': 1,  'XAUUSD': 1, 'XAGUSD': 1, 'NZDUSD':1,
     'HKDUSD': 1,  'KRWUSD': 1
 }
 
@@ -201,4 +201,5 @@ display_charts(col2, metrics_risk_on, "Risk-On (Fraqueza do Dólar)", risk_on_co
 
 
 st.caption("Feito com Streamlit • Dados via FinancialModelingPrep")
+
 
