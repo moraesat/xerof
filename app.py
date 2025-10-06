@@ -156,11 +156,11 @@ def display_charts(column, metrics, title_prefix, theme_colors):
     """Exibe todos os gráficos para uma cesta de métricas em uma coluna do Streamlit."""
     column.header(title_prefix)
 
-    # Gráfico 1: Amplitude Ponderada
-    for p, series in metrics['weighted_counts'].items():
-        fig = go.Figure(go.Scatter(x=series.tail(NUM_CANDLES_DISPLAY).index, y=series.tail(NUM_CANDLES_DISPLAY).values, mode="lines", fill="tozeroy", line_color=theme_colors['main']))
-        fig.update_layout(title=f'Força Ponderada (EMA {p})', yaxis=dict(range=[0, 100]), height=250, margin=dict(t=30, b=10, l=10, r=10), template="plotly_dark")
-        column.plotly_chart(fig, use_container_width=True)
+    # Gráfico 1: Amplitude Ponderada (REMOVIDO CONFORME SOLICITADO)
+    # for p, series in metrics['weighted_counts'].items():
+    #     fig = go.Figure(go.Scatter(x=series.tail(NUM_CANDLES_DISPLAY).index, y=series.tail(NUM_CANDLES_DISPLAY).values, mode="lines", fill="tozeroy", line_color=theme_colors['main']))
+    #     fig.update_layout(title=f'Força Ponderada (EMA {p})', yaxis=dict(range=[0, 100]), height=250, margin=dict(t=30, b=10, l=10, r=10), template="plotly_dark")
+    #     column.plotly_chart(fig, use_container_width=True)
     
     # Gráfico 2: Z-Score da Amplitude
     for p, series in metrics['z_scores'].items():
@@ -173,8 +173,8 @@ def display_charts(column, metrics, title_prefix, theme_colors):
     buyer_series = metrics['buyer_climax_zscore'].tail(NUM_CANDLES_DISPLAY).clip(lower=0)
     seller_series = metrics['seller_climax_zscore'].tail(NUM_CANDLES_DISPLAY).clip(lower=0)
     fig = go.Figure()
-    fig.add_trace(go.Bar(x=buyer_series.index, y=buyer_series.values, name='Clímax Comprador', marker_color=theme_colors['climax_buyer']))
-    fig.add_trace(go.Bar(x=seller_series.index, y=seller_series.values, name='Clímax Vendedor', marker_color=theme_colors['climax_seller']))
+    fig.add_trace(go.Bar(x=buyer_series.index, y=buyer_series.values, name='Clímax Comprador', marker_color='green')) # Cor padronizada
+    fig.add_trace(go.Bar(x=seller_series.index, y=seller_series.values, name='Clímax Vendedor', marker_color='red')) # Cor padronizada
     fig.add_hline(y=2, line_dash="dot", line_color="white")
     fig.update_layout(barmode='relative', title='Indicador de Clímax de Agressão', height=250, margin=dict(t=30, b=10, l=10, r=10), template="plotly_dark")
     column.plotly_chart(fig, use_container_width=True)
@@ -216,4 +216,5 @@ display_charts(col2, metrics_risk_on, "Risk-On (Fraqueza do Dólar)", risk_on_co
 
 
 st.caption("Feito com Streamlit • Dados via FinancialModelingPrep")
+
 
