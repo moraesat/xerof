@@ -120,11 +120,12 @@ if combined.empty:
     st.error("Nenhum dado disponível. Verifique a API ou os símbolos dos ativos.")
     st.stop()
 
-# --- Cálculos de EMAs, Condições, Agressão e Momentum ---
+# --- Cálculos de EMAs, Condições, Agressão, Momentum e Coesão ---
 weighted_counts = {p: pd.Series(0.0, index=combined.index) for p in MA_PERIODS}
 aggression_buyer = pd.Series(0.0, index=combined.index)
 aggression_seller = pd.Series(0.0, index=combined.index)
 momentum_components = []
+returns_cols = []
 
 for s in ASSETS:
     close_col, open_col, high_col, low_col = f"{s}_close", f"{s}_open", f"{s}_high", f"{s}_low"
@@ -150,6 +151,9 @@ for s in ASSETS:
     roc = combined[close_col].pct_change(periods=MOMENTUM_PERIOD)
     normalized_momentum = calculate_zscore(roc, MOMENTUM_Z_WINDOW)
     momentum_components.append(normalized_momentum.rename(s) * weight)
+    
+    # Coleta de retornos para cálculo de coesão
+    returns_cols.append(combined[close_col].pct_change().rename(s))
 
 # Cálculo do Índice de Momentum Agregado
 aggregate_momentum_index = pd.concat(momentum_components, axis=1).sum(axis=1)
@@ -158,6 +162,10 @@ aggregate_momentum_index = pd.concat(momentum_components, axis=1).sum(axis=1)
 buyer_climax_zscore = calculate_zscore(aggression_buyer, CLIMAX_Z_WINDOW)
 seller_climax_zscore = calculate_zscore(aggression_seller, CLIMAX_Z_WINDOW)
 
+# Cálculo de Coesão (Risk-Off)
+returns_df = pd.concat(returns_cols, axis=1)
+dispersion = returns_df.std(axis=1)
+cohesion_index = (1 / dispersion).rolling(window=20).mean()
 
 # --- Cálculos de Z-Score, ROC e Aceleração ---
 z_scores, rocs, accelerations = {}, {}, {}
@@ -223,18 +231,21 @@ with tab1:
     
     st.divider()
 
-    # --- IMPLEMENTAÇÃO 4: AMPLITUDE DE AGRESSÃO ---
-    st.header("Implementação 4: Amplitude de Agressão")
-    st.markdown("Mede a força de movimentos explosivos no mercado, sinalizando o início de um impulso ou um clímax de exaustão.")
-    st.latex(r''' \text{Energia da Vela} = \frac{(\text{Máxima} - \text{Mínima})}{\text{ATR}(\text{Período})} ''')
+    # --- IMPLEMENTAÇÃO 4: INDICADOR DE CLÍMAX DE AGRESSÃO ---
+    st.header("Implementação 4: Indicador de Clímax de Agressão")
+    st.markdown("Identifica quando um pico de agressão é estatisticamente extremo (acima de +2σ), sinalizando um provável clímax de exaustão ou iniciação.")
+    st.latex(r''' \text{Clímax}_i = \frac{\text{Agressão}_i - \text{Média}(\text{Agressão}_i)}{\text{DesvioPadrão}(\text{Agressão}_i)} ''')
     
-    agg_buyer_series = aggression_buyer.tail(NUM_CANDLES_DISPLAY)
-    agg_seller_series = aggression_seller.tail(NUM_CANDLES_DISPLAY)
-    fig_agg = go.Figure()
-    fig_agg.add_trace(go.Bar(x=agg_buyer_series.index, y=agg_buyer_series.values, name='Agressão Compradora', marker_color='green'))
-    fig_agg.add_trace(go.Bar(x=agg_seller_series.index, y=agg_seller_series.values, name='Agressão Vendedora', marker_color='red'))
-    fig_agg.update_layout(barmode='relative', title='Clímax de Agressão Ponderado', yaxis_title="Força da Agressão (0-100)", height=350, template="plotly_white", margin=dict(l=20, r=20, t=40, b=20))
-    st.plotly_chart(fig_agg, use_container_width=True)
+    # Clip para não mostrar valores abaixo de 0
+    buyer_climax_series = buyer_climax_zscore.tail(NUM_CANDLES_DISPLAY).clip(lower=0)
+    seller_climax_series = seller_climax_zscore.tail(NUM_CANDLES_DISPLAY).clip(lower=0)
+    
+    fig_climax = go.Figure()
+    fig_climax.add_trace(go.Bar(x=buyer_climax_series.index, y=buyer_climax_series.values, name='Clímax Comprador', marker_color='green'))
+    fig_climax.add_trace(go.Bar(x=seller_climax_series.index, y=seller_climax_series.values, name='Clímax Vendedor', marker_color='red'))
+    fig_climax.add_hline(y=2, line_dash="dot", line_color="black", annotation_text="Limiar de Clímax (+2σ)")
+    fig_climax.update_layout(barmode='relative', title='Indicador de Clímax (Z-Score da Agressão)', yaxis_title="Desvios Padrão (σ)", height=350, template="plotly_white", margin=dict(l=20, r=20, t=40, b=20))
+    st.plotly_chart(fig_climax, use_container_width=True)
     
     st.divider()
 
@@ -252,19 +263,20 @@ with tab1:
 
     st.divider()
     
-    # --- IMPLEMENTAÇÃO 6: INDICADOR DE CLÍMAX DE VOLUME ---
-    st.header("Implementação 6: Indicador de Clímax de Agressão")
-    st.markdown("Identifica quando um pico de agressão é estatisticamente extremo (acima de +2σ), sinalizando um provável clímax de exaustão ou iniciação.")
-    st.latex(r''' \text{Clímax}_i = \frac{\text{Agressão}_i - \text{Média}(\text{Agressão}_i)}{\text{DesvioPadrão}(\text{Agressão}_i)} ''')
-    
-    buyer_climax_series = buyer_climax_zscore.tail(NUM_CANDLES_DISPLAY)
-    seller_climax_series = seller_climax_zscore.tail(NUM_CANDLES_DISPLAY)
-    fig_climax = go.Figure()
-    fig_climax.add_trace(go.Bar(x=buyer_climax_series.index, y=buyer_climax_series.values, name='Clímax Comprador', marker_color='green'))
-    fig_climax.add_trace(go.Bar(x=seller_climax_series.index, y=seller_climax_series.values, name='Clímax Vendedor', marker_color='red'))
-    fig_climax.add_hline(y=2, line_dash="dot", line_color="black", annotation_text="Limiar de Clímax (+2σ)")
-    fig_climax.update_layout(barmode='relative', title='Indicador de Clímax (Z-Score da Agressão)', yaxis_title="Desvios Padrão (σ)", height=350, template="plotly_white", margin=dict(l=20, r=20, t=40, b=20))
-    st.plotly_chart(fig_climax, use_container_width=True)
+    # --- IMPLEMENTAÇÃO 6: INDICADOR DE RISCO (RISK-ON / RISK-OFF) ---
+    st.header("Implementação 6: Indicador de Risco (Risk-On / Risk-Off)")
+    st.markdown("Mede a correlação entre os ativos da cesta. Um pico indica que os ativos estão a mover-se em uníssono, sinalizando um sentimento de **Risk-Off** (medo).")
+    st.latex(r''' \text{Coesão} = \frac{1}{\text{Desvio Padrão dos Retornos}} ''')
+
+    cohesion_series = cohesion_index.tail(NUM_CANDLES_DISPLAY)
+    fig_coh = go.Figure()
+    fig_coh.add_trace(go.Scatter(x=cohesion_series.index, y=cohesion_series.values, name='Coesão', line=dict(color='teal'), fill='tozeroy'))
+    fig_coh.update_layout(
+        title='Índice de Coesão do Mercado',
+        yaxis_title="Nível de Coesão (Risk-Off)",
+        height=350, template="plotly_white", margin=dict(l=20, r=20, t=40, b=20)
+    )
+    st.plotly_chart(fig_coh, use_container_width=True)
 
 
 with tab2:
@@ -276,9 +288,12 @@ with tab2:
         latest_counts_weighted = {f"EMA {p}": f"{int(weighted_counts[p].iloc[-1])}%" for p in MA_PERIODS if not weighted_counts[p].empty}
         st.table(pd.DataFrame.from_dict(latest_counts_weighted, orient="index", columns=["Força Atual"]))
         
-        st.subheader("Agressão Atual")
-        latest_aggression = { "Agressão Compradora": f"{int(aggression_buyer.iloc[-1])}%", "Agressão Vendedora": f"{int(aggression_seller.iloc[-1])}%" }
-        st.table(pd.DataFrame.from_dict(latest_aggression, orient="index", columns=["Força Atual"]))
+        st.subheader("Clímax de Agressão")
+        latest_climax = {
+            "Clímax Comprador": f"{buyer_climax_zscore.iloc[-1]:.2f} σ",
+            "Clímax Vendedor": f"{seller_climax_zscore.iloc[-1]:.2f} σ"
+        }
+        st.table(pd.DataFrame.from_dict(latest_climax, orient='index', columns=['Nível Atual']))
 
     with col2:
         st.subheader("Z-Score")
@@ -296,12 +311,9 @@ with tab2:
         latest_momentum = {"Momentum Agregado": f"{aggregate_momentum_index.iloc[-1]:.2f}"}
         st.table(pd.DataFrame.from_dict(latest_momentum, orient='index', columns=['Valor Atual']))
 
-        st.subheader("Clímax de Agressão")
-        latest_climax = {
-            "Clímax Comprador": f"{buyer_climax_zscore.iloc[-1]:.2f} σ",
-            "Clímax Vendedor": f"{seller_climax_zscore.iloc[-1]:.2f} σ"
-        }
-        st.table(pd.DataFrame.from_dict(latest_climax, orient='index', columns=['Nível Atual']))
+        st.subheader("Sentimento de Risco")
+        latest_cohesion = {"Índice de Coesão": f"{cohesion_index.iloc[-1]:.2f}"}
+        st.table(pd.DataFrame.from_dict(latest_cohesion, orient='index', columns=['Valor Atual']))
 
 st.caption("Feito com Streamlit • Dados via FinancialModelingPrep")
 
