@@ -136,10 +136,12 @@ def calculate_breadth_metrics(asset_weights: dict, combined_data: pd.DataFrame):
     metrics['aggregate_momentum_index'] = pd.concat(momentum_components, axis=1).sum(axis=1)
     
     # --- Cálculos Derivados ---
-    metrics['z_scores'] = {}
+    metrics['z_scores'], metrics['rocs'], metrics['accelerations'] = {}, {}, {}
     for p in MA_PERIODS:
         series = weighted_counts[p]
         metrics['z_scores'][p] = calculate_zscore(series, Z_SCORE_WINDOW)
+        metrics['rocs'][p] = series.diff()
+        metrics['accelerations'][p] = metrics['rocs'][p].diff()
 
     return metrics
 
@@ -147,28 +149,47 @@ def display_charts(column, metrics, title_prefix, theme_colors):
     """Exibe todos os gráficos para uma cesta de métricas em uma coluna do Streamlit."""
     column.header(title_prefix)
     
-    # Gráfico 1: Z-Score da Amplitude
+    # Gráfico 1: Força Ponderada
+    for p, series in metrics['weighted_counts'].items():
+        fig = go.Figure(go.Scatter(x=series.tail(NUM_CANDLES_DISPLAY).index, y=series.tail(NUM_CANDLES_DISPLAY).values, mode="lines", fill="tozeroy", line_color=theme_colors['main']))
+        fig.update_layout(title=f'Força Ponderada (EMA {p})', yaxis=dict(range=[0, 100]), height=250, margin=dict(t=30, b=10, l=10, r=10), template="plotly_dark")
+        column.plotly_chart(fig, use_container_width=True)
+    
+    # Gráfico 2: Z-Score da Amplitude
     for p, series in metrics['z_scores'].items():
         fig = go.Figure(go.Scatter(x=series.tail(NUM_CANDLES_DISPLAY).index, y=series.tail(NUM_CANDLES_DISPLAY).values, line=dict(color=theme_colors['accent'])))
         fig.add_hline(y=2, line_dash="dot", line_color="white", opacity=0.5); fig.add_hline(y=-2, line_dash="dot", line_color="white", opacity=0.5)
-        fig.update_layout(title=f'Nível de Extremo (Z-Score EMA {p})', yaxis=dict(range=[-3.5, 3.5]), height=300, margin=dict(t=30, b=10, l=10, r=10), template="plotly_dark")
+        fig.update_layout(title=f'Nível de Extremo (Z-Score EMA {p})', yaxis=dict(range=[-3.5, 3.5]), height=250, margin=dict(t=30, b=10, l=10, r=10), template="plotly_dark")
         column.plotly_chart(fig, use_container_width=True)
 
-    # Gráfico 2: Indicador de Clímax
+    # Gráfico 3: Velocidade e Aceleração (baseado na EMA mais curta)
+    if MA_PERIODS:
+        p_short = MA_PERIODS[0]
+        roc_series = metrics['rocs'][p_short].tail(NUM_CANDLES_DISPLAY)
+        fig_roc = go.Figure(go.Bar(x=roc_series.index, y=roc_series.values, marker_color=['green' if v >= 0 else 'red' for v in roc_series.values]))
+        fig_roc.update_layout(title=f'Velocidade (ROC EMA {p_short})', height=200, margin=dict(t=30, b=10, l=10, r=10), template="plotly_dark")
+        column.plotly_chart(fig_roc, use_container_width=True)
+        
+        accel_series = metrics['accelerations'][p_short].tail(NUM_CANDLES_DISPLAY)
+        fig_accel = go.Figure(go.Bar(x=accel_series.index, y=accel_series.values, marker_color=['#1f77b4' if v >= 0 else '#ff7f0e' for v in accel_series.values]))
+        fig_accel.update_layout(title=f'Aceleração (EMA {p_short})', height=200, margin=dict(t=30, b=10, l=10, r=10), template="plotly_dark")
+        column.plotly_chart(fig_accel, use_container_width=True)
+
+    # Gráfico 4: Indicador de Clímax
     buyer_series = metrics['buyer_climax_zscore'].tail(NUM_CANDLES_DISPLAY).clip(lower=0)
     seller_series = metrics['seller_climax_zscore'].tail(NUM_CANDLES_DISPLAY).clip(lower=0)
     fig = go.Figure()
     fig.add_trace(go.Bar(x=buyer_series.index, y=buyer_series.values, name='Clímax Comprador', marker_color='green'))
     fig.add_trace(go.Bar(x=seller_series.index, y=seller_series.values, name='Clímax Vendedor', marker_color='red'))
     fig.add_hline(y=3, line_dash="dot", line_color="white", annotation_text="Limiar de Clímax (+3σ)")
-    fig.update_layout(barmode='relative', title='Indicador de Clímax de Agressão', height=300, margin=dict(t=30, b=10, l=10, r=10), template="plotly_dark")
+    fig.update_layout(barmode='relative', title='Indicador de Clímax de Agressão', height=250, margin=dict(t=30, b=10, l=10, r=10), template="plotly_dark")
     column.plotly_chart(fig, use_container_width=True)
 
-    # Gráfico 3: Índice de Momentum
+    # Gráfico 5: Índice de Momentum
     series = metrics['aggregate_momentum_index'].tail(NUM_CANDLES_DISPLAY)
     fig = go.Figure(go.Scatter(x=series.index, y=series.values, line=dict(color=theme_colors['momentum']), fill='tozeroy'))
     fig.add_hline(y=0, line_dash="dash", line_color="grey")
-    fig.update_layout(title='Índice de Momentum Agregado', height=300, margin=dict(t=30, b=10, l=10, r=10), template="plotly_dark")
+    fig.update_layout(title='Índice de Momentum Agregado', height=250, margin=dict(t=30, b=10, l=10, r=10), template="plotly_dark")
     column.plotly_chart(fig, use_container_width=True)
 
 
@@ -201,6 +222,4 @@ display_charts(col2, metrics_risk_on, "Risk-On (Fraqueza do Dólar)", risk_on_co
 
 
 st.caption("Feito com Streamlit • Dados via FinancialModelingPrep")
-
-
 
