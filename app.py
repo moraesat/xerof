@@ -97,8 +97,9 @@ def calculate_breadth_metrics(asset_weights: dict, combined_data: pd.DataFrame):
     """Calcula todas as métricas de amplitude para uma cesta de ativos."""
     metrics = {}
     
-    # --- Cálculos Base ---
-    weighted_counts = {p: pd.Series(0.0, index=combined_data.index) for p in MA_PERIODS}
+    # --- Dicionários de armazenamento ---
+    metrics['weighted_counts'] = {p: pd.Series(0.0, index=combined_data.index) for p in MA_PERIODS}
+    metrics['weighted_distance_indices'] = {p: pd.Series(0.0, index=combined_data.index) for p in MA_PERIODS}
     aggression_buyer = pd.Series(0.0, index=combined_data.index)
     aggression_seller = pd.Series(0.0, index=combined_data.index)
     momentum_components = []
@@ -107,28 +108,31 @@ def calculate_breadth_metrics(asset_weights: dict, combined_data: pd.DataFrame):
         close_col, open_col, high_col, low_col = f"{s}_close", f"{s}_open", f"{s}_high", f"{s}_low"
         if close_col not in combined_data.columns: continue
 
-        # Condição de força é sempre a mesma: vela de alta
         strength_condition = (combined_data[close_col] > combined_data[open_col])
-
-        # Agressão
         atr = calculate_atr(combined_data[high_col], combined_data[low_col], combined_data[close_col], ATR_PERIOD)
-        is_high_energy = (combined_data[high_col] - combined_data[low_col]) / atr > ENERGY_THRESHOLD
         
+        # Agressão
+        is_high_energy = (combined_data[high_col] - combined_data[low_col]) / atr > ENERGY_THRESHOLD
         aggression_buyer += (strength_condition & is_high_energy).astype(int) * weight
         aggression_seller += (~strength_condition & is_high_energy).astype(int) * weight
         
-        # Amplitude Ponderada
+        # Cálculos por Período de MA
         for p in MA_PERIODS:
             ema_val = combined_data[close_col].ewm(span=p, adjust=False).mean()
+            
+            # Amplitude Ponderada (Contagem)
             above_ema = (combined_data[close_col] > ema_val)
-            weighted_counts[p] += above_ema.astype(int) * weight
+            metrics['weighted_counts'][p] += above_ema.astype(int) * weight
+
+            # Índice de Distância Ponderada (Convicção)
+            normalized_distance = (combined_data[close_col] - ema_val) / atr
+            metrics['weighted_distance_indices'][p] += normalized_distance * weight
         
         # Momentum
         roc = combined_data[close_col].pct_change(periods=MOMENTUM_PERIOD)
         normalized_momentum = calculate_zscore(roc, MOMENTUM_Z_WINDOW)
         momentum_components.append(normalized_momentum * weight)
 
-    metrics['weighted_counts'] = weighted_counts
     metrics['aggression_buyer'] = aggression_buyer
     metrics['aggression_seller'] = aggression_seller
     metrics['buyer_climax_zscore'] = calculate_zscore(aggression_buyer, CLIMAX_Z_WINDOW)
@@ -138,7 +142,7 @@ def calculate_breadth_metrics(asset_weights: dict, combined_data: pd.DataFrame):
     # --- Cálculos Derivados ---
     metrics['z_scores'], metrics['rocs'], metrics['accelerations'] = {}, {}, {}
     for p in MA_PERIODS:
-        series = weighted_counts[p]
+        series = metrics['weighted_counts'][p]
         metrics['z_scores'][p] = calculate_zscore(series, Z_SCORE_WINDOW)
         metrics['rocs'][p] = series.diff()
         metrics['accelerations'][p] = metrics['rocs'][p].diff()
@@ -149,10 +153,10 @@ def display_charts(column, metrics, title_prefix, theme_colors):
     """Exibe todos os gráficos para uma cesta de métricas em uma coluna do Streamlit."""
     column.header(title_prefix)
     
-    # Gráfico 1: Força Ponderada
+    # Gráfico 1: Força Ponderada (Contagem)
     for p, series in metrics['weighted_counts'].items():
         fig = go.Figure(go.Scatter(x=series.tail(NUM_CANDLES_DISPLAY).index, y=series.tail(NUM_CANDLES_DISPLAY).values, mode="lines", fill="tozeroy", line_color=theme_colors['main']))
-        fig.update_layout(title=f'Força Ponderada (EMA {p})', yaxis=dict(range=[0, 100]), height=250, margin=dict(t=30, b=10, l=10, r=10), template="plotly_dark")
+        fig.update_layout(title=f'Força Ponderada (Contagem EMA {p})', yaxis=dict(range=[0, 100]), height=250, margin=dict(t=30, b=10, l=10, r=10), template="plotly_dark")
         column.plotly_chart(fig, use_container_width=True)
     
     # Gráfico 2: Z-Score da Amplitude
@@ -192,6 +196,13 @@ def display_charts(column, metrics, title_prefix, theme_colors):
     fig.update_layout(title='Índice de Momentum Agregado', height=250, margin=dict(t=30, b=10, l=10, r=10), template="plotly_dark")
     column.plotly_chart(fig, use_container_width=True)
 
+    # Gráfico 6: Índice de Distância Ponderada (NOVO)
+    for p, series in metrics['weighted_distance_indices'].items():
+        fig = go.Figure(go.Scatter(x=series.tail(NUM_CANDLES_DISPLAY).index, y=series.tail(NUM_CANDLES_DISPLAY).values, mode="lines", line_color=theme_colors['distance'], fill='tozeroy'))
+        fig.add_hline(y=0, line_dash="dash", line_color="grey")
+        fig.update_layout(title=f'Índice de Distância (Convicção EMA {p})', yaxis_title="Distância Ponderada (ATR)", height=250, margin=dict(t=30, b=10, l=10, r=10), template="plotly_dark")
+        column.plotly_chart(fig, use_container_width=True)
+
 
 # ===========================
 # Lógica Principal da Aplicação
@@ -211,8 +222,8 @@ metrics_risk_off = calculate_breadth_metrics(RISK_OFF_ASSETS, combined)
 metrics_risk_on = calculate_breadth_metrics(RISK_ON_ASSETS, combined)
 
 # --- Definição dos Temas de Cores ---
-risk_off_colors = {'main': '#E74C3C', 'accent': '#F1948A', 'momentum': '#D98880'}
-risk_on_colors = {'main': '#2ECC71', 'accent': '#ABEBC6', 'momentum': '#76D7C4'}
+risk_off_colors = {'main': '#E74C3C', 'accent': '#F1948A', 'momentum': '#D98880', 'distance': '#F5B041'}
+risk_on_colors = {'main': '#2ECC71', 'accent': '#ABEBC6', 'momentum': '#76D7C4', 'distance': '#5DADE2'}
 
 
 # --- Visualização ---
