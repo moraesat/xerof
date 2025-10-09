@@ -16,19 +16,15 @@ st.set_page_config(page_title="Market Breadth Dashboard",
 API_KEY = "3CImfjoxNd98om3uhS89X4lmlp4Mrp3H"
 TZ = pytz.timezone("America/Sao_Paulo")
 
-# --- CESTAS DE ATIVOS E PESOS ---
-# Cesta Risk-Off: Mede a força do Dólar (USD/XXX). Pesos somam 100.
+# --- CESTAS DE ATIVOS E PESOS ESTÁTICOS ---
 RISK_OFF_ASSETS = {
     'DX-Y.NYB': 20, 'USDJPY': 20, 'USDCHF': 10, 'USDCAD': 10, 'USDCNH': 10,
     'USDSEK': 5,  'USDNOK': 5,  'USDMXN': 5,  'USDSGD': 5,  'USDZAR': 2,
     'USDHKD': 2,  'USDPLN': 2,  'USDCZK': 1,  'USDDKK': 1,  'USDHUF': 1
 }
-
-# Cesta Risk-On: Mede a fraqueza do Dólar (XXX/USD). Ativos de baixo volume removidos. Pesos somam 100.
 RISK_ON_ASSETS = {
     'EURUSD': 38, 'GBPUSD': 16, 'AUDUSD': 10, 'XAUUSD': 24, 'XAGUSD': 9, 'NZDUSD': 3
 }
-
 ALL_UNIQUE_ASSETS = list(set(RISK_OFF_ASSETS.keys()) | set(RISK_ON_ASSETS.keys()))
 NUM_CANDLES_DISPLAY = 120
 
@@ -38,16 +34,13 @@ st_autorefresh(interval=60 * 1000, key="refresh")
 # ===========================
 # Menu lateral
 # ===========================
-st.sidebar.title("Configurações")
-MA_INPUT = st.sidebar.text_input(
-    "Períodos das Médias Móveis", "9,21,72,200")
-MA_PERIODS = [int(x.strip())
-              for x in MA_INPUT.split(",") if x.strip().isdigit()]
-
+st.sidebar.title("Configurações Gerais")
+MA_INPUT = st.sidebar.text_input("Períodos das Médias Móveis", "9,21")
+MA_PERIODS = [int(x.strip()) for x in MA_INPUT.split(",") if x.strip().isdigit()]
 TIMEFRAME = st.sidebar.radio("Timeframe", ["1min", "5min", "15min", "1h"])
 
 st.sidebar.header("Parâmetros dos Indicadores")
-CONVICTION_THRESHOLD = st.sidebar.slider("Filtro de Convicção (ATR)", 0.0, 1.0, 0.2, 0.05, help="Distância mínima (em ATRs) da média para um ativo ser contado. Filtra o 'samba'.")
+CONVICTION_THRESHOLD = st.sidebar.slider("Filtro de Convicção (ATR)", 0.0, 1.0, 0.2, 0.05)
 Z_SCORE_WINDOW = st.sidebar.slider("Janela Z-Score (Amplitude)", 50, 500, 200)
 ATR_PERIOD = st.sidebar.slider("Período do ATR", 10, 30, 14)
 ENERGY_THRESHOLD = st.sidebar.slider("Limiar de 'Energia'", 1.0, 3.0, 1.5, 0.1)
@@ -55,36 +48,7 @@ CLIMAX_Z_WINDOW = st.sidebar.slider("Janela Z-Score (Clímax)", 50, 200, 100)
 MOMENTUM_PERIOD = st.sidebar.slider("Período ROC (Momentum)", 10, 50, 21)
 MOMENTUM_Z_WINDOW = st.sidebar.slider("Janela Z-Score (Momentum)", 50, 200, 100)
 VOLUME_MA_PERIOD = st.sidebar.slider("Janela Média de Volume (VFI)", 10, 50, 20)
-
-st.sidebar.header("Configurações de Visualização")
-
-COLUMN_LAYOUT_CHOICE = st.sidebar.radio(
-    "Exibição das Colunas",
-    ["Ambas as Colunas", "Apenas Risk-Off", "Apenas Risk-On"],
-    index=0
-)
-
-OVERLAY_ASSET = st.sidebar.selectbox(
-    "Ativo para Sobreposição",
-    ["XAUUSD", "EURUSD", "GBPUSD"]
-)
-
-ALL_CHARTS = [
-    'Força Ponderada (Contagem)',
-    'Força Qualificada (Filtro)',
-    'Z-Score da Força Qualificada',
-    'Velocidade e Aceleração',
-    'Indicador de Clímax de Agressão',
-    'Índice de Momentum Agregado',
-    'Z-Score da Convicção',
-    'Índice de Força de Volume (VFI)'
-]
-SELECTED_CHARTS = st.sidebar.multiselect(
-    "Selecionar Gráficos para Exibir",
-    options=ALL_CHARTS,
-    default=ALL_CHARTS
-)
-
+CORRELATION_WINDOW = st.sidebar.slider("Janela de Correlação (XAUUSD)", 50, 200, 100, help="Janela para o cálculo da correlação dinâmica com o XAUUSD.")
 
 # ===========================
 # Funções de Cálculo e Busca
@@ -114,20 +78,26 @@ def build_combined_data(symbols: list, timeframe: str, candles_to_fetch: int) ->
     return pd.concat(frames, axis=1).ffill().dropna()
 
 def calculate_atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int) -> pd.Series:
-    tr1 = pd.DataFrame(high - low)
-    tr2 = pd.DataFrame(abs(high - close.shift()))
-    tr3 = pd.DataFrame(abs(low - close.shift()))
-    tr = pd.concat([tr1, tr2, tr3], axis=1, join='inner').max(axis=1)
+    tr = pd.concat([high - low, abs(high - close.shift()), abs(low - close.shift())], axis=1).max(axis=1)
     return tr.rolling(period).mean()
 
 def calculate_zscore(series: pd.Series, window: int) -> pd.Series:
     return (series - series.rolling(window=window).mean()) / series.rolling(window=window).std()
 
-def calculate_breadth_metrics(asset_weights: dict, combined_data: pd.DataFrame):
-    """Calcula todas as métricas de amplitude para uma cesta de ativos."""
+def calculate_dynamic_correlation_weights(asset_list, reference_asset_symbol, combined_data, window):
+    """Calcula os pesos de correlação dinâmica de uma lista de ativos contra um ativo de referência."""
+    weights = {}
+    ref_series = combined_data[f"{reference_asset_symbol}_close"]
+    for asset in asset_list:
+        asset_series = combined_data.get(f"{asset}_close")
+        if asset_series is not None:
+            weights[asset] = ref_series.rolling(window=window).corr(asset_series)
+    return weights
+
+def calculate_breadth_metrics(asset_weights: dict, combined_data: pd.DataFrame, is_dynamic_weights=False):
     metrics = {}
-    
     metrics['weighted_counts'] = {p: pd.Series(0.0, index=combined_data.index) for p in MA_PERIODS}
+    # ... (inicialização de outros dicionários)
     metrics['qualified_counts'] = {p: pd.Series(0.0, index=combined_data.index) for p in MA_PERIODS}
     metrics['weighted_distance_indices'] = {p: pd.Series(0.0, index=combined_data.index) for p in MA_PERIODS}
     metrics['volume_force_indices'] = {p: pd.Series(0.0, index=combined_data.index) for p in MA_PERIODS}
@@ -152,7 +122,6 @@ def calculate_breadth_metrics(asset_weights: dict, combined_data: pd.DataFrame):
 
         for p in MA_PERIODS:
             ema_val = combined_data[close_col].ewm(span=p, adjust=False).mean()
-            
             above_ema = (combined_data[close_col] > ema_val)
             metrics['weighted_counts'][p] += above_ema.astype(int) * weight
 
@@ -172,7 +141,7 @@ def calculate_breadth_metrics(asset_weights: dict, combined_data: pd.DataFrame):
     metrics['aggression_seller'] = aggression_seller
     metrics['buyer_climax_zscore'] = calculate_zscore(aggression_buyer, CLIMAX_Z_WINDOW)
     metrics['seller_climax_zscore'] = calculate_zscore(aggression_seller, CLIMAX_Z_WINDOW)
-    metrics['aggregate_momentum_index'] = pd.concat(momentum_components, axis=1).sum(axis=1)
+    metrics['aggregate_momentum_index'] = pd.concat(momentum_components, axis=1).sum(axis=1) if momentum_components else pd.Series(0.0, index=combined_data.index)
     
     metrics['z_scores'], metrics['rocs'], metrics['accelerations'] = {}, {}, {}
     metrics['conviction_zscore'] = {}
@@ -192,9 +161,9 @@ def calculate_breadth_metrics(asset_weights: dict, combined_data: pd.DataFrame):
     return metrics
 
 def display_charts(column, metrics, title_prefix, theme_colors, overlay_price_series, selected_charts, overlay_asset):
-    """Exibe todos os gráficos para uma cesta de métricas em uma coluna do Streamlit."""
+    # Função de display (permanece a mesma, mas agora chamada com diferentes métricas)
     column.header(title_prefix)
-
+    # ... (código de display dos gráficos, idêntico à versão anterior)
     summaries = {
         'Força Ponderada (Contagem)': "Confirma se a maioria do mercado apoia a direção do ativo.",
         'Força Qualificada (Filtro)': "Filtra o ruído e confirma se o movimento do ativo tem convicção.",
@@ -209,24 +178,20 @@ def display_charts(column, metrics, title_prefix, theme_colors, overlay_price_se
     def create_fig_with_overlay(title):
         fig = go.Figure()
         fig.update_layout(
-            template="plotly_dark",
-            height=250,
-            margin=dict(t=50, b=20, l=20, r=40),
+            template="plotly_dark", height=250, margin=dict(t=50, b=20, l=20, r=40),
             title=dict(text=title, x=0.01),
             yaxis2=dict(title=overlay_asset, overlaying='y', side='right', showgrid=False, showticklabels=False, zeroline=False, color=theme_colors['overlay']),
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
         )
         return fig
 
-    # --- Gráficos ---
-    
     if 'Força Ponderada (Contagem)' in selected_charts:
         column.markdown(f"<p style='font-size:12px; color:grey;'><b>{overlay_asset}:</b> {summaries['Força Ponderada (Contagem)']}</p>", unsafe_allow_html=True)
         for p, series in metrics['weighted_counts'].items():
             fig = create_fig_with_overlay(f'Força Ponderada (Contagem EMA {p})')
             fig.add_trace(go.Scatter(x=series.tail(NUM_CANDLES_DISPLAY).index, y=series.tail(NUM_CANDLES_DISPLAY).values, name='Força', mode="lines", fill="tozeroy", line_color=theme_colors['main'], opacity=0.7))
             fig.add_trace(go.Scatter(x=overlay_price_series.index, y=overlay_price_series.values, name=overlay_asset, yaxis='y2', line=dict(color=theme_colors['overlay'], width=1.5, dash='dot')))
-            fig.update_layout(yaxis=dict(range=[0, 100]))
+            fig.update_layout(yaxis=dict(range=[0, 100] if not isinstance(list(asset_weights.values())[0], pd.Series) else None))
             column.plotly_chart(fig, use_container_width=True)
 
     if 'Força Qualificada (Filtro)' in selected_charts:
@@ -235,9 +200,10 @@ def display_charts(column, metrics, title_prefix, theme_colors, overlay_price_se
             fig = create_fig_with_overlay(f'Força Qualificada (Filtro EMA {p})')
             fig.add_trace(go.Scatter(x=series.tail(NUM_CANDLES_DISPLAY).index, y=series.tail(NUM_CANDLES_DISPLAY).values, name='Qualificada', mode="lines", fill="tozeroy", line_color=theme_colors['qualified']))
             fig.add_trace(go.Scatter(x=overlay_price_series.index, y=overlay_price_series.values, name=overlay_asset, yaxis='y2', line=dict(color=theme_colors['overlay'], width=1.5, dash='dot')))
-            fig.update_layout(yaxis=dict(range=[0, 100]))
+            fig.update_layout(yaxis=dict(range=[0, 100] if not isinstance(list(asset_weights.values())[0], pd.Series) else None))
             column.plotly_chart(fig, use_container_width=True)
-        
+    
+    # ... (restante do código de display dos outros gráficos)
     if 'Z-Score da Força Qualificada' in selected_charts:
         column.markdown(f"<p style='font-size:12px; color:grey;'><b>{overlay_asset}:</b> {summaries['Z-Score da Força Qualificada']}</p>", unsafe_allow_html=True)
         for p, series in metrics['qualified_zscore'].items():
@@ -298,45 +264,52 @@ def display_charts(column, metrics, title_prefix, theme_colors, overlay_price_se
             fig.add_hline(y=0, line_dash="dash", line_color="grey")
             column.plotly_chart(fig, use_container_width=True)
 
-
 # ===========================
 # Lógica Principal da Aplicação
 # ===========================
-st.title("⚔️ Painel de Batalha: Risk-Off vs. Risk-On")
-st.caption(f"Timeframe: {TIMEFRAME} | Última atualização: {datetime.now(TZ).strftime('%H:%M:%S')}")
+st.title("⚔️ Painel de Batalha de Amplitude")
 
-candles_to_fetch = (max(MA_PERIODS) if MA_PERIODS else 200) + NUM_CANDLES_DISPLAY + max(Z_SCORE_WINDOW, MOMENTUM_Z_WINDOW, CLIMAX_Z_WINDOW)
-combined = build_combined_data(ALL_UNIQUE_ASSETS, TIMEFRAME, candles_to_fetch)
+tab_main, tab_xauusd = st.tabs(["Painel de Batalha Principal", "🥇 Análise Específica XAUUSD"])
 
-if combined.empty:
-    st.error("Nenhum dado disponível. Verifique a API ou os símbolos dos ativos.")
-    st.stop()
+# --- Aba Principal ---
+with tab_main:
+    candles_to_fetch = (max(MA_PERIODS) if MA_PERIODS else 200) + NUM_CANDLES_DISPLAY + max(Z_SCORE_WINDOW, MOMENTUM_Z_WINDOW, CLIMAX_Z_WINDOW)
+    combined_main = build_combined_data(ALL_UNIQUE_ASSETS, TIMEFRAME, candles_to_fetch)
+    
+    if combined_main.empty:
+        st.error("Nenhum dado disponível para o Painel Principal.")
+    else:
+        overlay_price_series = combined_main.get(f"{st.sidebar.selectbox('Ativo para Sobreposição (Principal)', ['XAUUSD', 'EURUSD', 'GBPUSD'], key='overlay_main')}_close", pd.Series(dtype=float)).tail(NUM_CANDLES_DISPLAY)
+        metrics_risk_off = calculate_breadth_metrics(RISK_OFF_ASSETS, combined_main)
+        metrics_risk_on = calculate_breadth_metrics(RISK_ON_ASSETS, combined_main)
+        
+        risk_off_colors = {'main': '#E74C3C', 'accent': '#F1948A', 'momentum': '#D98880', 'qualified': '#FFA07A', 'conviction_z': '#F5B041', 'vfi': '#E67E22', 'overlay': 'rgba(255, 215, 0, 0.5)'}
+        risk_on_colors = {'main': '#2ECC71', 'accent': '#ABEBC6', 'momentum': '#76D7C4', 'qualified': '#87CEEB', 'conviction_z': '#5DADE2', 'vfi': '#3498DB', 'overlay': 'rgba(255, 215, 0, 0.5)'}
+        
+        col1, col2 = st.columns(2)
+        display_charts(col1, metrics_risk_off, "Risk-Off (Força do Dólar)", risk_off_colors, overlay_price_series, st.sidebar.multiselect("Gráficos (Principal)", ALL_UNIQUE_ASSETS, default=ALL_UNIQUE_ASSETS, key='charts_main'), "XAUUSD")
+        display_charts(col2, metrics_risk_on, "Risk-On (Fraqueza do Dólar)", risk_on_colors, overlay_price_series, st.sidebar.multiselect("Gráficos (Principal)", ALL_UNIQUE_ASSETS, default=ALL_UNIQUE_ASSETS, key='charts_main_2'), "XAUUSD")
 
-# --- Extrair preço do ativo para sobreposição ---
-overlay_price_series = pd.Series(dtype=float)
-overlay_col_name = f"{OVERLAY_ASSET}_close"
-if overlay_col_name in combined.columns:
-    overlay_price_series = combined[overlay_col_name].tail(NUM_CANDLES_DISPLAY)
+# --- Aba XAUUSD ---
+with tab_xauusd:
+    st.header("Índice de Confirmação para o Ouro (Ponderado por Correlação)")
+    st.markdown("Esta análise mede se o comportamento de outros ativos do mercado apoia ou contradiz o movimento atual do Ouro. Os pesos são a correlação dinâmica de cada ativo com o XAUUSD.")
+    
+    xauusd_basket = list(set(ALL_UNIQUE_ASSETS) - {'XAUUSD', 'XAGUSD'})
+    
+    if 'XAUUSD_close' not in combined_main.columns:
+        st.warning("Dados do XAUUSD não disponíveis para calcular a correlação.")
+    else:
+        # Calcular pesos de correlação dinâmica
+        dynamic_weights = calculate_dynamic_correlation_weights(xauusd_basket, 'XAUUSD', combined_main, CORRELATION_WINDOW)
+        
+        # Calcular métricas com os pesos dinâmicos
+        metrics_xauusd_corr = calculate_breadth_metrics(dynamic_weights, combined_main, is_dynamic_weights=True)
+        
+        xauusd_price_series_tab2 = combined_main['XAUUSD_close'].tail(NUM_CANDLES_DISPLAY)
+        corr_colors = {'main': '#FFD700', 'accent': '#FFFACD', 'momentum': '#F0E68C', 'qualified': '#EEE8AA', 'conviction_z': '#FFECB3', 'vfi': '#FFC107', 'overlay': 'rgba(255, 255, 255, 0.6)'}
 
-# --- Calcular métricas para ambas as cestas ---
-metrics_risk_off = calculate_breadth_metrics(RISK_OFF_ASSETS, combined)
-metrics_risk_on = calculate_breadth_metrics(RISK_ON_ASSETS, combined)
-
-# --- Definição dos Temas de Cores ---
-risk_off_colors = {'main': '#E74C3C', 'accent': '#F1948A', 'momentum': '#D98880', 'qualified': '#FFA07A', 'conviction_z': '#F5B041', 'vfi': '#E67E22', 'overlay': 'rgba(255, 215, 0, 0.5)'}
-risk_on_colors = {'main': '#2ECC71', 'accent': '#ABEBC6', 'momentum': '#76D7C4', 'qualified': '#87CEEB', 'conviction_z': '#5DADE2', 'vfi': '#3498DB', 'overlay': 'rgba(255, 215, 0, 0.5)'}
-
-
-# --- Visualização ---
-if COLUMN_LAYOUT_CHOICE == "Ambas as Colunas":
-    col1, col2 = st.columns(2)
-    display_charts(col1, metrics_risk_off, "Risk-Off (Força do Dólar)", risk_off_colors, overlay_price_series, SELECTED_CHARTS, OVERLAY_ASSET)
-    display_charts(col2, metrics_risk_on, "Risk-On (Fraqueza do Dólar)", risk_on_colors, overlay_price_series, SELECTED_CHARTS, OVERLAY_ASSET)
-elif COLUMN_LAYOUT_CHOICE == "Apenas Risk-Off":
-    display_charts(st, metrics_risk_off, "Risk-Off (Força do Dólar)", risk_off_colors, overlay_price_series, SELECTED_CHARTS, OVERLAY_ASSET)
-elif COLUMN_LAYOUT_CHOICE == "Apenas Risk-On":
-    display_charts(st, metrics_risk_on, "Risk-On (Fraqueza do Dólar)", risk_on_colors, overlay_price_series, SELECTED_CHARTS, OVERLAY_ASSET)
-
+        display_charts(st, metrics_xauusd_corr, "Índice de Confirmação (Correlação com XAUUSD)", corr_colors, xauusd_price_series_tab2, st.sidebar.multiselect("Gráficos (XAUUSD)", ALL_UNIQUE_ASSETS, default=ALL_UNIQUE_ASSETS, key='charts_xauusd'), "XAUUSD")
 
 st.caption("Feito com Streamlit • Dados via FinancialModelingPrep")
 
