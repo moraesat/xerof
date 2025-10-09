@@ -28,13 +28,16 @@ RISK_ON_ASSETS = {
 ALL_UNIQUE_ASSETS = list(set(RISK_OFF_ASSETS.keys()) | set(RISK_ON_ASSETS.keys()))
 NUM_CANDLES_DISPLAY = 120
 
-# Atualização automática a cada 60s
-st_autorefresh(interval=60 * 1000, key="refresh")
+# Atualização automática a cada 20s
+st_autorefresh(interval=20 * 1000, key="refresh")
 
 # ===========================
 # Menu lateral
 # ===========================
 st.sidebar.title("Configurações Gerais")
+if st.sidebar.button("Atualizar Agora 🔄"):
+    st.rerun()
+
 MA_INPUT = st.sidebar.text_input("Períodos das Médias Móveis", "9,21")
 MA_PERIODS = [int(x.strip()) for x in MA_INPUT.split(",") if x.strip().isdigit()]
 TIMEFRAME = st.sidebar.radio("Timeframe", ["1min", "5min", "15min", "1h"])
@@ -61,7 +64,7 @@ ALL_CHARTS_LIST = [
 # Funções de Cálculo e Busca
 # ===========================
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=20)
 def get_single_data(symbol: str, timeframe: str, candles_to_fetch: int) -> pd.DataFrame | None:
     try:
         base_url = f"https://financialmodelingprep.com/api/v3/historical-chart/{timeframe}/{symbol}"
@@ -251,7 +254,7 @@ def display_charts(column, metrics, title_prefix, theme_colors, overlay_price_se
         fig_climax.update_layout(barmode='relative')
         column.plotly_chart(fig_climax, use_container_width=True)
 
-    if 'Indicador de Clímax de Rejeição' in selected_charts: # NOVO
+    if 'Indicador de Clímax de Rejeição' in selected_charts:
         column.markdown(f"<p style='font-size:12px; color:grey;'><b>{overlay_asset}:</b> {summaries['Indicador de Clímax de Rejeição']}</p>", unsafe_allow_html=True)
         buyer_series = metrics['rejection_buyer'].tail(NUM_CANDLES_DISPLAY)
         seller_series = metrics['rejection_seller'].tail(NUM_CANDLES_DISPLAY)
@@ -295,6 +298,9 @@ def display_charts(column, metrics, title_prefix, theme_colors, overlay_price_se
 # ===========================
 st.title("⚔️ Painel de Batalha de Amplitude")
 
+# --- Indicador de Frescura dos Dados ---
+placeholder = st.empty()
+
 main_tab_placeholder, xauusd_tab_placeholder = st.tabs(["Painel de Batalha Principal", "🥇 Análise Específica XAUUSD"])
 
 with main_tab_placeholder:
@@ -306,6 +312,15 @@ with main_tab_placeholder:
     if combined_main.empty:
         st.error("Nenhum dado disponível para o Painel Principal.")
     else:
+        # Atualiza o indicador de frescura
+        now = datetime.now(TZ)
+        last_candle_time = combined_main.index[-1]
+        delay_minutes = (now - last_candle_time).total_seconds() / 60
+        if delay_minutes < 2:
+            placeholder.success(f"🟢 Dados FRESCOS (Atraso de {delay_minutes:.1f} min)")
+        else:
+            placeholder.warning(f"🟠 ATENÇÃO: Atraso nos dados de {delay_minutes:.1f} min")
+
         st.sidebar.header("Visualização (Principal)")
         selected_overlay_main = st.sidebar.selectbox('Ativo para Sobreposição', ['XAUUSD', 'EURUSD', 'GBPUSD'], key='overlay_main')
         selected_charts_main = st.sidebar.multiselect("Gráficos a Exibir", ALL_CHARTS_LIST, default=ALL_CHARTS_LIST, key='charts_main')
