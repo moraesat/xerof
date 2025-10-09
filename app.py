@@ -24,11 +24,9 @@ RISK_OFF_ASSETS = {
     'USDHKD': 2,  'USDPLN': 2,  'USDCZK': 1,  'USDDKK': 1,  'USDHUF': 1
 }
 
-# Cesta Risk-On: Mede a fraqueza do Dólar (XXX/USD). Pesos somam 100.
+# Cesta Risk-On: Mede a fraqueza do Dólar (XXX/USD). Ativos de baixo volume removidos. Pesos somam 100.
 RISK_ON_ASSETS = {
-    'EURUSD': 27, 'JPYUSD': 14, 'GBPUSD': 11, 'AUDUSD': 7, 'CADUSD': 6,
-    'CNYUSD': 4,  'CHFUSD': 4,  'XAUUSD': 17, 'XAGUSD': 6, 'NZDUSD': 2,
-    'HKDUSD': 1,  'KRWUSD': 1
+    'EURUSD': 38, 'GBPUSD': 16, 'AUDUSD': 10, 'XAUUSD': 24, 'XAGUSD': 9, 'NZDUSD': 3
 }
 
 ALL_UNIQUE_ASSETS = list(set(RISK_OFF_ASSETS.keys()) | set(RISK_ON_ASSETS.keys()))
