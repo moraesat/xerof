@@ -122,8 +122,9 @@ def calculate_breadth_metrics(asset_weights: dict, combined_data: pd.DataFrame):
             above_ema = (combined_data[close_col] > ema_val)
             metrics['weighted_counts'][p] += above_ema.astype(int) * weight
 
-            # Índice de Distância Ponderada (Convicção)
-            normalized_distance = (combined_data[close_col] - ema_val) / atr
+            # Índice de Distância Ponderada (Convicção) - COM CORREÇÃO
+            atr_safe = atr.replace(0, np.nan) # Evita divisão por zero
+            normalized_distance = ((combined_data[close_col] - ema_val) / atr_safe).fillna(0)
             metrics['weighted_distance_indices'][p] += normalized_distance * weight
         
         # Momentum
