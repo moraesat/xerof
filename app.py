@@ -47,6 +47,7 @@ MA_PERIODS = [int(x.strip())
 TIMEFRAME = st.sidebar.radio("Timeframe", ["1min", "5min", "15min", "1h"])
 
 st.sidebar.header("Parâmetros dos Indicadores")
+CONVICTION_THRESHOLD = st.sidebar.slider("Filtro de Convicção (ATR)", 0.0, 1.0, 0.2, 0.05, help="Distância mínima (em ATRs) da média para um ativo ser contado. Filtra o 'samba'.")
 Z_SCORE_WINDOW = st.sidebar.slider("Janela Z-Score (Amplitude)", 50, 500, 200)
 ATR_PERIOD = st.sidebar.slider("Período do ATR", 10, 30, 14)
 ENERGY_THRESHOLD = st.sidebar.slider("Limiar de 'Energia'", 1.0, 3.0, 1.5, 0.1)
@@ -97,7 +98,7 @@ def calculate_breadth_metrics(asset_weights: dict, combined_data: pd.DataFrame):
     
     # --- Dicionários de armazenamento ---
     metrics['weighted_counts'] = {p: pd.Series(0.0, index=combined_data.index) for p in MA_PERIODS}
-    metrics['weighted_distance_indices'] = {p: pd.Series(0.0, index=combined_data.index) for p in MA_PERIODS}
+    metrics['qualified_counts'] = {p: pd.Series(0.0, index=combined_data.index) for p in MA_PERIODS} # NOVO
     aggression_buyer = pd.Series(0.0, index=combined_data.index)
     aggression_seller = pd.Series(0.0, index=combined_data.index)
     momentum_components = []
@@ -108,9 +109,10 @@ def calculate_breadth_metrics(asset_weights: dict, combined_data: pd.DataFrame):
 
         strength_condition = (combined_data[close_col] > combined_data[open_col])
         atr = calculate_atr(combined_data[high_col], combined_data[low_col], combined_data[close_col], ATR_PERIOD)
+        atr_safe = atr.replace(0, np.nan)
         
         # Agressão
-        is_high_energy = (combined_data[high_col] - combined_data[low_col]) / atr > ENERGY_THRESHOLD
+        is_high_energy = (combined_data[high_col] - combined_data[low_col]) / atr_safe > ENERGY_THRESHOLD
         aggression_buyer += (strength_condition & is_high_energy).astype(int) * weight
         aggression_seller += (~strength_condition & is_high_energy).astype(int) * weight
         
@@ -118,14 +120,14 @@ def calculate_breadth_metrics(asset_weights: dict, combined_data: pd.DataFrame):
         for p in MA_PERIODS:
             ema_val = combined_data[close_col].ewm(span=p, adjust=False).mean()
             
-            # Amplitude Ponderada (Contagem)
+            # Amplitude Ponderada (Contagem Simples)
             above_ema = (combined_data[close_col] > ema_val)
             metrics['weighted_counts'][p] += above_ema.astype(int) * weight
 
-            # Índice de Distância Ponderada (Convicção) - COM CORREÇÃO
-            atr_safe = atr.replace(0, np.nan) # Evita divisão por zero
+            # Contagem Qualificada (com Filtro de Convicção)
             normalized_distance = ((combined_data[close_col] - ema_val) / atr_safe).fillna(0)
-            metrics['weighted_distance_indices'][p] += normalized_distance * weight
+            is_significant_above = normalized_distance > CONVICTION_THRESHOLD
+            metrics['qualified_counts'][p] += is_significant_above.astype(int) * weight
         
         # Momentum
         roc = combined_data[close_col].pct_change(periods=MOMENTUM_PERIOD)
@@ -139,18 +141,10 @@ def calculate_breadth_metrics(asset_weights: dict, combined_data: pd.DataFrame):
     metrics['aggregate_momentum_index'] = pd.concat(momentum_components, axis=1).sum(axis=1)
     
     # --- Cálculos Derivados ---
-    metrics['z_scores'], metrics['rocs'], metrics['accelerations'] = {}, {}, {}
-    metrics['conviction_zscore'] = {} # NOVO
+    metrics['z_scores'] = {}
     for p in MA_PERIODS:
         series = metrics['weighted_counts'][p]
         metrics['z_scores'][p] = calculate_zscore(series, Z_SCORE_WINDOW)
-        metrics['rocs'][p] = series.diff()
-        metrics['accelerations'][p] = metrics['rocs'][p].diff()
-        
-        # Cálculo do Z-Score de Convicção (NOVO)
-        conviction_index = (metrics['weighted_counts'][p] / 100) * metrics['weighted_distance_indices'][p]
-        metrics['conviction_zscore'][p] = calculate_zscore(conviction_index, Z_SCORE_WINDOW)
-
 
     return metrics
 
@@ -158,31 +152,24 @@ def display_charts(column, metrics, title_prefix, theme_colors):
     """Exibe todos os gráficos para uma cesta de métricas em uma coluna do Streamlit."""
     column.header(title_prefix)
     
-    # Gráfico 1: Força Ponderada (Contagem)
+    # Gráfico 1: Força Ponderada (Contagem Simples)
     for p, series in metrics['weighted_counts'].items():
-        fig = go.Figure(go.Scatter(x=series.tail(NUM_CANDLES_DISPLAY).index, y=series.tail(NUM_CANDLES_DISPLAY).values, mode="lines", fill="tozeroy", line_color=theme_colors['main']))
-        fig.update_layout(title=f'Força Ponderada (Contagem EMA {p})', yaxis=dict(range=[0, 100]), height=250, margin=dict(t=30, b=10, l=10, r=10), template="plotly_dark")
+        fig = go.Figure(go.Scatter(x=series.tail(NUM_CANDLES_DISPLAY).index, y=series.tail(NUM_CANDLES_DISPLAY).values, mode="lines", fill="tozeroy", line_color=theme_colors['main'], opacity=0.7))
+        fig.update_layout(title=f'Força Ponderada (Contagem Simples EMA {p})', yaxis=dict(range=[0, 100]), height=250, margin=dict(t=30, b=10, l=10, r=10), template="plotly_dark")
+        column.plotly_chart(fig, use_container_width=True)
+
+    # Gráfico 2: Força Ponderada Qualificada (NOVO)
+    for p, series in metrics['qualified_counts'].items():
+        fig = go.Figure(go.Scatter(x=series.tail(NUM_CANDLES_DISPLAY).index, y=series.tail(NUM_CANDLES_DISPLAY).values, mode="lines", fill="tozeroy", line_color=theme_colors['qualified']))
+        fig.update_layout(title=f'Força Qualificada (Contagem c/ Filtro EMA {p})', yaxis=dict(range=[0, 100]), height=250, margin=dict(t=30, b=10, l=10, r=10), template="plotly_dark")
         column.plotly_chart(fig, use_container_width=True)
     
-    # Gráfico 2: Z-Score da Amplitude
+    # Gráfico 3: Z-Score da Amplitude
     for p, series in metrics['z_scores'].items():
         fig = go.Figure(go.Scatter(x=series.tail(NUM_CANDLES_DISPLAY).index, y=series.tail(NUM_CANDLES_DISPLAY).values, line=dict(color=theme_colors['accent'])))
         fig.add_hline(y=2, line_dash="dot", line_color="white", opacity=0.5); fig.add_hline(y=-2, line_dash="dot", line_color="white", opacity=0.5)
         fig.update_layout(title=f'Nível de Extremo (Z-Score EMA {p})', yaxis=dict(range=[-3.5, 3.5]), height=250, margin=dict(t=30, b=10, l=10, r=10), template="plotly_dark")
         column.plotly_chart(fig, use_container_width=True)
-
-    # Gráfico 3: Velocidade e Aceleração (baseado na EMA mais curta)
-    if MA_PERIODS:
-        p_short = MA_PERIODS[0]
-        roc_series = metrics['rocs'][p_short].tail(NUM_CANDLES_DISPLAY)
-        fig_roc = go.Figure(go.Bar(x=roc_series.index, y=roc_series.values, marker_color=['green' if v >= 0 else 'red' for v in roc_series.values]))
-        fig_roc.update_layout(title=f'Velocidade (ROC EMA {p_short})', height=200, margin=dict(t=30, b=10, l=10, r=10), template="plotly_dark")
-        column.plotly_chart(fig_roc, use_container_width=True)
-        
-        accel_series = metrics['accelerations'][p_short].tail(NUM_CANDLES_DISPLAY)
-        fig_accel = go.Figure(go.Bar(x=accel_series.index, y=accel_series.values, marker_color=['#1f77b4' if v >= 0 else '#ff7f0e' for v in accel_series.values]))
-        fig_accel.update_layout(title=f'Aceleração (EMA {p_short})', height=200, margin=dict(t=30, b=10, l=10, r=10), template="plotly_dark")
-        column.plotly_chart(fig_accel, use_container_width=True)
 
     # Gráfico 4: Indicador de Clímax
     buyer_series = metrics['buyer_climax_zscore'].tail(NUM_CANDLES_DISPLAY).clip(lower=0)
@@ -200,21 +187,6 @@ def display_charts(column, metrics, title_prefix, theme_colors):
     fig.add_hline(y=0, line_dash="dash", line_color="grey")
     fig.update_layout(title='Índice de Momentum Agregado', height=250, margin=dict(t=30, b=10, l=10, r=10), template="plotly_dark")
     column.plotly_chart(fig, use_container_width=True)
-
-    # Gráfico 6: Índice de Distância Ponderada
-    for p, series in metrics['weighted_distance_indices'].items():
-        fig = go.Figure(go.Scatter(x=series.tail(NUM_CANDLES_DISPLAY).index, y=series.tail(NUM_CANDLES_DISPLAY).values, mode="lines", line_color=theme_colors['distance'], fill='tozeroy'))
-        fig.add_hline(y=0, line_dash="dash", line_color="grey")
-        fig.update_layout(title=f'Índice de Distância (Convicção EMA {p})', yaxis_title="Distância (ATR)", height=250, margin=dict(t=30, b=10, l=10, r=10), template="plotly_dark")
-        column.plotly_chart(fig, use_container_width=True)
-        
-    # Gráfico 7: Z-Score da Convicção (NOVO)
-    for p, series in metrics['conviction_zscore'].items():
-        fig = go.Figure(go.Scatter(x=series.tail(NUM_CANDLES_DISPLAY).index, y=series.tail(NUM_CANDLES_DISPLAY).values, line=dict(color=theme_colors['conviction_z'])))
-        fig.add_hline(y=2, line_dash="dot", line_color="white", opacity=0.5); fig.add_hline(y=-2, line_dash="dot", line_color="white", opacity=0.5)
-        fig.update_layout(title=f'Z-Score da Convicção (EMA {p})', yaxis=dict(range=[-3.5, 3.5]), height=250, margin=dict(t=30, b=10, l=10, r=10), template="plotly_dark")
-        column.plotly_chart(fig, use_container_width=True)
-
 
 # ===========================
 # Lógica Principal da Aplicação
@@ -234,8 +206,8 @@ metrics_risk_off = calculate_breadth_metrics(RISK_OFF_ASSETS, combined)
 metrics_risk_on = calculate_breadth_metrics(RISK_ON_ASSETS, combined)
 
 # --- Definição dos Temas de Cores ---
-risk_off_colors = {'main': '#E74C3C', 'accent': '#F1948A', 'momentum': '#D98880', 'distance': '#F5B041', 'conviction_z': '#FFA07A'}
-risk_on_colors = {'main': '#2ECC71', 'accent': '#ABEBC6', 'momentum': '#76D7C4', 'distance': '#5DADE2', 'conviction_z': '#87CEEB'}
+risk_off_colors = {'main': '#E74C3C', 'accent': '#F1948A', 'momentum': '#D98880', 'qualified': '#FFA07A'}
+risk_on_colors = {'main': '#2ECC71', 'accent': '#ABEBC6', 'momentum': '#76D7C4', 'qualified': '#87CEEB'}
 
 
 # --- Visualização ---
