@@ -45,6 +45,7 @@ Z_SCORE_WINDOW = st.sidebar.slider("Janela Z-Score (Amplitude)", 50, 500, 200)
 ATR_PERIOD = st.sidebar.slider("Período do ATR", 10, 30, 14)
 ENERGY_THRESHOLD = st.sidebar.slider("Limiar de 'Energia'", 1.0, 3.0, 1.5, 0.1)
 CLIMAX_Z_WINDOW = st.sidebar.slider("Janela Z-Score (Clímax)", 50, 200, 100)
+SHADOW_TO_BODY_RATIO = st.sidebar.slider("Rácio Sombra/Corpo (Rejeição)", 1.0, 5.0, 2.0, 0.1)
 MOMENTUM_PERIOD = st.sidebar.slider("Período ROC (Momentum)", 10, 50, 21)
 MOMENTUM_Z_WINDOW = st.sidebar.slider("Janela Z-Score (Momentum)", 50, 200, 100)
 VOLUME_MA_PERIOD = st.sidebar.slider("Janela Média de Volume (VFI)", 10, 50, 20)
@@ -52,8 +53,8 @@ CORRELATION_WINDOW = st.sidebar.slider("Janela de Correlação (XAUUSD)", 50, 20
 
 ALL_CHARTS_LIST = [
     'Força Ponderada (Contagem)', 'Força Qualificada (Filtro)', 'Z-Score da Força Qualificada',
-    'Velocidade e Aceleração', 'Indicador de Clímax de Agressão', 'Índice de Momentum Agregado',
-    'Z-Score da Convicção', 'Índice de Força de Volume (VFI)'
+    'Velocidade e Aceleração', 'Indicador de Clímax de Agressão', 'Indicador de Clímax de Rejeição',
+    'Índice de Momentum Agregado', 'Z-Score da Convicção', 'Índice de Força de Volume (VFI)'
 ]
 
 # ===========================
@@ -101,12 +102,13 @@ def calculate_dynamic_correlation_weights(asset_list, reference_asset_symbol, co
 
 def calculate_breadth_metrics(asset_weights: dict, combined_data: pd.DataFrame, is_dynamic_weights=False):
     metrics = {}
-    # Inicializa todos os dicionários de métricas
     for metric_name in ['weighted_counts', 'qualified_counts', 'weighted_distance_indices', 'volume_force_indices']:
         metrics[metric_name] = {p: pd.Series(0.0, index=combined_data.index) for p in MA_PERIODS}
     
     aggression_buyer = pd.Series(0.0, index=combined_data.index)
     aggression_seller = pd.Series(0.0, index=combined_data.index)
+    rejection_buyer = pd.Series(0.0, index=combined_data.index)
+    rejection_seller = pd.Series(0.0, index=combined_data.index)
     momentum_components = []
 
     for s in asset_weights.keys():
@@ -121,6 +123,13 @@ def calculate_breadth_metrics(asset_weights: dict, combined_data: pd.DataFrame, 
         aggression_buyer += (strength_condition & is_high_energy).astype(int) * weight
         aggression_seller += (~strength_condition & is_high_energy).astype(int) * weight
         
+        body = abs(combined_data[close_col] - combined_data[open_col]).replace(0, 0.00001)
+        upper_shadow = combined_data[high_col] - combined_data[[open_col, close_col]].max(axis=1)
+        lower_shadow = combined_data[[open_col, close_col]].min(axis=1) - combined_data[low_col]
+        
+        rejection_buyer += (lower_shadow > body * SHADOW_TO_BODY_RATIO).astype(int) * weight
+        rejection_seller += (upper_shadow > body * SHADOW_TO_BODY_RATIO).astype(int) * weight
+
         volume_ma = combined_data[vol_col].rolling(window=VOLUME_MA_PERIOD).mean().replace(0, np.nan)
         volume_strength = (combined_data[vol_col] / volume_ma).fillna(1)
 
@@ -143,6 +152,8 @@ def calculate_breadth_metrics(asset_weights: dict, combined_data: pd.DataFrame, 
 
     metrics['aggression_buyer'] = aggression_buyer
     metrics['aggression_seller'] = aggression_seller
+    metrics['rejection_buyer'] = rejection_buyer
+    metrics['rejection_seller'] = rejection_seller
     metrics['buyer_climax_zscore'] = calculate_zscore(aggression_buyer, CLIMAX_Z_WINDOW)
     metrics['seller_climax_zscore'] = calculate_zscore(aggression_seller, CLIMAX_Z_WINDOW)
     metrics['aggregate_momentum_index'] = pd.concat(momentum_components, axis=1).sum(axis=1) if momentum_components else pd.Series(0.0, index=combined_data.index)
@@ -171,7 +182,8 @@ def display_charts(column, metrics, title_prefix, theme_colors, overlay_price_se
         'Força Qualificada (Filtro)': "Filtra o ruído e confirma se o movimento do ativo tem convicção.",
         'Z-Score da Força Qualificada': "Alerta para exaustão ou pontos de viragem no ativo quando atinge extremos.",
         'Velocidade e Aceleração': "Mede a 'explosão' de um movimento; um pico de velocidade confirma um breakout no ativo.",
-        'Indicador de Clímax de Agressão': "Sinaliza a capitulação do lado contrário, indicando o fim de um pullback contra o ativo.",
+        'Indicador de Clímax de Agressão': "Sinaliza a capitulação (golpe final) de uma das pontas.",
+        'Indicador de Clímax de Rejeição': "Sinaliza a absorção e a resposta da ponta contrária após um clímax.",
         'Índice de Momentum Agregado': "Mostra a saúde da tendência; divergências com o preço do ativo sinalizam fraqueza.",
         'Z-Score da Convicção': "Identifica extremos de euforia/pânico (Contagem * Distância), ideal para reversões no ativo.",
         'Índice de Força de Volume (VFI)': "Valida um movimento no ativo com participação institucional (Distância * Volume)."
@@ -187,6 +199,8 @@ def display_charts(column, metrics, title_prefix, theme_colors, overlay_price_se
         )
         return fig
 
+    # --- Gráficos ---
+    
     if 'Força Ponderada (Contagem)' in selected_charts:
         column.markdown(f"<p style='font-size:12px; color:grey;'><b>{overlay_asset}:</b> {summaries['Força Ponderada (Contagem)']}</p>", unsafe_allow_html=True)
         for p, series in metrics['weighted_counts'].items():
@@ -237,6 +251,17 @@ def display_charts(column, metrics, title_prefix, theme_colors, overlay_price_se
         fig_climax.update_layout(barmode='relative')
         column.plotly_chart(fig_climax, use_container_width=True)
 
+    if 'Indicador de Clímax de Rejeição' in selected_charts: # NOVO
+        column.markdown(f"<p style='font-size:12px; color:grey;'><b>{overlay_asset}:</b> {summaries['Indicador de Clímax de Rejeição']}</p>", unsafe_allow_html=True)
+        buyer_series = metrics['rejection_buyer'].tail(NUM_CANDLES_DISPLAY)
+        seller_series = metrics['rejection_seller'].tail(NUM_CANDLES_DISPLAY)
+        fig_rej = create_fig_with_overlay('Indicador de Clímax de Rejeição')
+        fig_rej.add_trace(go.Bar(x=buyer_series.index, y=buyer_series.values, name='Rejeição Compradora', marker_color='lime'))
+        fig_rej.add_trace(go.Bar(x=seller_series.index, y=seller_series.values, name='Rejeição Vendedora', marker_color='pink'))
+        fig_rej.add_trace(go.Scatter(x=overlay_price_series.index, y=overlay_price_series.values, name=overlay_asset, yaxis='y2', line=dict(color=theme_colors['overlay'], width=1.5, dash='dot')))
+        fig_rej.update_layout(barmode='relative')
+        column.plotly_chart(fig_rej, use_container_width=True)
+
     if 'Índice de Momentum Agregado' in selected_charts:
         column.markdown(f"<p style='font-size:12px; color:grey;'><b>{overlay_asset}:</b> {summaries['Índice de Momentum Agregado']}</p>", unsafe_allow_html=True)
         series = metrics['aggregate_momentum_index'].tail(NUM_CANDLES_DISPLAY)
@@ -270,7 +295,6 @@ def display_charts(column, metrics, title_prefix, theme_colors, overlay_price_se
 # ===========================
 st.title("⚔️ Painel de Batalha de Amplitude")
 
-# --- Aba Principal ---
 main_tab_placeholder, xauusd_tab_placeholder = st.tabs(["Painel de Batalha Principal", "🥇 Análise Específica XAUUSD"])
 
 with main_tab_placeholder:
@@ -305,7 +329,6 @@ with xauusd_tab_placeholder:
     
     xauusd_basket = list(set(ALL_UNIQUE_ASSETS) - {'XAUUSD', 'XAGUSD'})
     
-    # Reutiliza os dados já baixados se possível
     if 'combined_main' in locals() and not combined_main.empty and 'XAUUSD_close' in combined_main.columns:
         
         st.sidebar.header("Visualização (XAUUSD)")
