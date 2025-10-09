@@ -58,7 +58,11 @@ VOLUME_MA_PERIOD = st.sidebar.slider("Janela Média de Volume (VFI)", 10, 50, 20
 
 st.sidebar.header("Configurações de Visualização")
 
-NUM_COLUMNS = st.sidebar.radio("Layout das Colunas", [1, 2], index=1)
+COLUMN_LAYOUT_CHOICE = st.sidebar.radio(
+    "Exibição das Colunas",
+    ["Ambas as Colunas", "Apenas Risk-Off", "Apenas Risk-On"],
+    index=0
+)
 
 OVERLAY_ASSET = st.sidebar.selectbox(
     "Ativo para Sobreposição",
@@ -324,13 +328,13 @@ risk_on_colors = {'main': '#2ECC71', 'accent': '#ABEBC6', 'momentum': '#76D7C4',
 
 
 # --- Visualização ---
-if NUM_COLUMNS == 2:
+if COLUMN_LAYOUT_CHOICE == "Ambas as Colunas":
     col1, col2 = st.columns(2)
     display_charts(col1, metrics_risk_off, "Risk-Off (Força do Dólar)", risk_off_colors, overlay_price_series, SELECTED_CHARTS, OVERLAY_ASSET)
     display_charts(col2, metrics_risk_on, "Risk-On (Fraqueza do Dólar)", risk_on_colors, overlay_price_series, SELECTED_CHARTS, OVERLAY_ASSET)
-else:
+elif COLUMN_LAYOUT_CHOICE == "Apenas Risk-Off":
     display_charts(st, metrics_risk_off, "Risk-Off (Força do Dólar)", risk_off_colors, overlay_price_series, SELECTED_CHARTS, OVERLAY_ASSET)
-    st.divider()
+elif COLUMN_LAYOUT_CHOICE == "Apenas Risk-On":
     display_charts(st, metrics_risk_on, "Risk-On (Fraqueza do Dólar)", risk_on_colors, overlay_price_series, SELECTED_CHARTS, OVERLAY_ASSET)
 
 
