@@ -50,6 +50,12 @@ MOMENTUM_Z_WINDOW = st.sidebar.slider("Janela Z-Score (Momentum)", 50, 200, 100)
 VOLUME_MA_PERIOD = st.sidebar.slider("Janela Média de Volume (VFI)", 10, 50, 20)
 CORRELATION_WINDOW = st.sidebar.slider("Janela de Correlação (XAUUSD)", 50, 200, 100, help="Janela para o cálculo da correlação dinâmica com o XAUUSD.")
 
+ALL_CHARTS_LIST = [
+    'Força Ponderada (Contagem)', 'Força Qualificada (Filtro)', 'Z-Score da Força Qualificada',
+    'Velocidade e Aceleração', 'Indicador de Clímax de Agressão', 'Índice de Momentum Agregado',
+    'Z-Score da Convicção', 'Índice de Força de Volume (VFI)'
+]
+
 # ===========================
 # Funções de Cálculo e Busca
 # ===========================
@@ -85,47 +91,45 @@ def calculate_zscore(series: pd.Series, window: int) -> pd.Series:
     return (series - series.rolling(window=window).mean()) / series.rolling(window=window).std()
 
 def calculate_dynamic_correlation_weights(asset_list, reference_asset_symbol, combined_data, window):
-    """Calcula os pesos de correlação dinâmica de uma lista de ativos contra um ativo de referência."""
     weights = {}
-    ref_series = combined_data[f"{reference_asset_symbol}_close"]
+    ref_returns = combined_data[f"{reference_asset_symbol}_close"].pct_change()
     for asset in asset_list:
-        asset_series = combined_data.get(f"{asset}_close")
-        if asset_series is not None:
-            weights[asset] = ref_series.rolling(window=window).corr(asset_series)
+        asset_returns = combined_data.get(f"{asset}_close", pd.Series(dtype=float)).pct_change()
+        if not asset_returns.empty:
+            weights[asset] = ref_returns.rolling(window=window).corr(asset_returns)
     return weights
 
 def calculate_breadth_metrics(asset_weights: dict, combined_data: pd.DataFrame, is_dynamic_weights=False):
     metrics = {}
-    metrics['weighted_counts'] = {p: pd.Series(0.0, index=combined_data.index) for p in MA_PERIODS}
-    # ... (inicialização de outros dicionários)
-    metrics['qualified_counts'] = {p: pd.Series(0.0, index=combined_data.index) for p in MA_PERIODS}
-    metrics['weighted_distance_indices'] = {p: pd.Series(0.0, index=combined_data.index) for p in MA_PERIODS}
-    metrics['volume_force_indices'] = {p: pd.Series(0.0, index=combined_data.index) for p in MA_PERIODS}
+    # Inicializa todos os dicionários de métricas
+    for metric_name in ['weighted_counts', 'qualified_counts', 'weighted_distance_indices', 'volume_force_indices']:
+        metrics[metric_name] = {p: pd.Series(0.0, index=combined_data.index) for p in MA_PERIODS}
+    
     aggression_buyer = pd.Series(0.0, index=combined_data.index)
     aggression_seller = pd.Series(0.0, index=combined_data.index)
     momentum_components = []
 
-    for s, weight in asset_weights.items():
+    for s in asset_weights.keys():
+        weight = asset_weights[s]
         close_col, open_col, high_col, low_col, vol_col = f"{s}_close", f"{s}_open", f"{s}_high", f"{s}_low", f"{s}_volume"
         if close_col not in combined_data.columns: continue
 
         strength_condition = (combined_data[close_col] > combined_data[open_col])
-        atr = calculate_atr(combined_data[high_col], combined_data[low_col], combined_data[close_col], ATR_PERIOD)
-        atr_safe = atr.replace(0, np.nan)
+        atr = calculate_atr(combined_data[high_col], combined_data[low_col], combined_data[close_col], ATR_PERIOD).replace(0, np.nan)
         
-        is_high_energy = (combined_data[high_col] - combined_data[low_col]) / atr_safe > ENERGY_THRESHOLD
+        is_high_energy = (combined_data[high_col] - combined_data[low_col]) / atr > ENERGY_THRESHOLD
         aggression_buyer += (strength_condition & is_high_energy).astype(int) * weight
         aggression_seller += (~strength_condition & is_high_energy).astype(int) * weight
         
-        volume_ma = combined_data[vol_col].rolling(window=VOLUME_MA_PERIOD).mean()
-        volume_strength = (combined_data[vol_col] / volume_ma.replace(0, np.nan)).fillna(1)
+        volume_ma = combined_data[vol_col].rolling(window=VOLUME_MA_PERIOD).mean().replace(0, np.nan)
+        volume_strength = (combined_data[vol_col] / volume_ma).fillna(1)
 
         for p in MA_PERIODS:
             ema_val = combined_data[close_col].ewm(span=p, adjust=False).mean()
             above_ema = (combined_data[close_col] > ema_val)
             metrics['weighted_counts'][p] += above_ema.astype(int) * weight
 
-            normalized_distance = ((combined_data[close_col] - ema_val) / atr_safe).fillna(0)
+            normalized_distance = ((combined_data[close_col] - ema_val) / atr).fillna(0)
             is_significant_above = normalized_distance > CONVICTION_THRESHOLD
             metrics['qualified_counts'][p] += is_significant_above.astype(int) * weight
             metrics['weighted_distance_indices'][p] += normalized_distance * weight
@@ -152,7 +156,7 @@ def calculate_breadth_metrics(asset_weights: dict, combined_data: pd.DataFrame, 
         metrics['rocs'][p] = series_wc.diff()
         metrics['accelerations'][p] = series_wc.diff().diff()
         
-        conviction_index = (series_wc / 100) * metrics['weighted_distance_indices'][p]
+        conviction_index = (series_wc / (100 if not is_dynamic_weights else 1)) * metrics['weighted_distance_indices'][p]
         metrics['conviction_zscore'][p] = calculate_zscore(conviction_index, Z_SCORE_WINDOW)
 
         series_qc = metrics['qualified_counts'][p]
@@ -160,10 +164,8 @@ def calculate_breadth_metrics(asset_weights: dict, combined_data: pd.DataFrame, 
 
     return metrics
 
-def display_charts(column, metrics, title_prefix, theme_colors, overlay_price_series, selected_charts, overlay_asset):
-    # Função de display (permanece a mesma, mas agora chamada com diferentes métricas)
+def display_charts(column, metrics, title_prefix, theme_colors, overlay_price_series, selected_charts, overlay_asset, is_dynamic_weights=False):
     column.header(title_prefix)
-    # ... (código de display dos gráficos, idêntico à versão anterior)
     summaries = {
         'Força Ponderada (Contagem)': "Confirma se a maioria do mercado apoia a direção do ativo.",
         'Força Qualificada (Filtro)': "Filtra o ruído e confirma se o movimento do ativo tem convicção.",
@@ -191,7 +193,7 @@ def display_charts(column, metrics, title_prefix, theme_colors, overlay_price_se
             fig = create_fig_with_overlay(f'Força Ponderada (Contagem EMA {p})')
             fig.add_trace(go.Scatter(x=series.tail(NUM_CANDLES_DISPLAY).index, y=series.tail(NUM_CANDLES_DISPLAY).values, name='Força', mode="lines", fill="tozeroy", line_color=theme_colors['main'], opacity=0.7))
             fig.add_trace(go.Scatter(x=overlay_price_series.index, y=overlay_price_series.values, name=overlay_asset, yaxis='y2', line=dict(color=theme_colors['overlay'], width=1.5, dash='dot')))
-            fig.update_layout(yaxis=dict(range=[0, 100] if not isinstance(list(asset_weights.values())[0], pd.Series) else None))
+            if not is_dynamic_weights: fig.update_layout(yaxis=dict(range=[0, 100]))
             column.plotly_chart(fig, use_container_width=True)
 
     if 'Força Qualificada (Filtro)' in selected_charts:
@@ -200,10 +202,9 @@ def display_charts(column, metrics, title_prefix, theme_colors, overlay_price_se
             fig = create_fig_with_overlay(f'Força Qualificada (Filtro EMA {p})')
             fig.add_trace(go.Scatter(x=series.tail(NUM_CANDLES_DISPLAY).index, y=series.tail(NUM_CANDLES_DISPLAY).values, name='Qualificada', mode="lines", fill="tozeroy", line_color=theme_colors['qualified']))
             fig.add_trace(go.Scatter(x=overlay_price_series.index, y=overlay_price_series.values, name=overlay_asset, yaxis='y2', line=dict(color=theme_colors['overlay'], width=1.5, dash='dot')))
-            fig.update_layout(yaxis=dict(range=[0, 100] if not isinstance(list(asset_weights.values())[0], pd.Series) else None))
+            if not is_dynamic_weights: fig.update_layout(yaxis=dict(range=[0, 100]))
             column.plotly_chart(fig, use_container_width=True)
     
-    # ... (restante do código de display dos outros gráficos)
     if 'Z-Score da Força Qualificada' in selected_charts:
         column.markdown(f"<p style='font-size:12px; color:grey;'><b>{overlay_asset}:</b> {summaries['Z-Score da Força Qualificada']}</p>", unsafe_allow_html=True)
         for p, series in metrics['qualified_zscore'].items():
@@ -269,17 +270,24 @@ def display_charts(column, metrics, title_prefix, theme_colors, overlay_price_se
 # ===========================
 st.title("⚔️ Painel de Batalha de Amplitude")
 
-tab_main, tab_xauusd = st.tabs(["Painel de Batalha Principal", "🥇 Análise Específica XAUUSD"])
-
 # --- Aba Principal ---
-with tab_main:
-    candles_to_fetch = (max(MA_PERIODS) if MA_PERIODS else 200) + NUM_CANDLES_DISPLAY + max(Z_SCORE_WINDOW, MOMENTUM_Z_WINDOW, CLIMAX_Z_WINDOW)
-    combined_main = build_combined_data(ALL_UNIQUE_ASSETS, TIMEFRAME, candles_to_fetch)
+main_tab_placeholder, xauusd_tab_placeholder = st.tabs(["Painel de Batalha Principal", "🥇 Análise Específica XAUUSD"])
+
+with main_tab_placeholder:
+    st.header("Painel Principal (Ponderado por Liquidez)")
+    
+    candles_to_fetch_main = (max(MA_PERIODS) if MA_PERIODS else 200) + NUM_CANDLES_DISPLAY + max(Z_SCORE_WINDOW, MOMENTUM_Z_WINDOW, CLIMAX_Z_WINDOW)
+    combined_main = build_combined_data(ALL_UNIQUE_ASSETS, TIMEFRAME, candles_to_fetch_main)
     
     if combined_main.empty:
         st.error("Nenhum dado disponível para o Painel Principal.")
     else:
-        overlay_price_series = combined_main.get(f"{st.sidebar.selectbox('Ativo para Sobreposição (Principal)', ['XAUUSD', 'EURUSD', 'GBPUSD'], key='overlay_main')}_close", pd.Series(dtype=float)).tail(NUM_CANDLES_DISPLAY)
+        st.sidebar.header("Visualização (Principal)")
+        selected_overlay_main = st.sidebar.selectbox('Ativo para Sobreposição', ['XAUUSD', 'EURUSD', 'GBPUSD'], key='overlay_main')
+        selected_charts_main = st.sidebar.multiselect("Gráficos a Exibir", ALL_CHARTS_LIST, default=ALL_CHARTS_LIST, key='charts_main')
+        
+        overlay_price_series_main = combined_main.get(f"{selected_overlay_main}_close", pd.Series(dtype=float)).tail(NUM_CANDLES_DISPLAY)
+        
         metrics_risk_off = calculate_breadth_metrics(RISK_OFF_ASSETS, combined_main)
         metrics_risk_on = calculate_breadth_metrics(RISK_ON_ASSETS, combined_main)
         
@@ -287,19 +295,22 @@ with tab_main:
         risk_on_colors = {'main': '#2ECC71', 'accent': '#ABEBC6', 'momentum': '#76D7C4', 'qualified': '#87CEEB', 'conviction_z': '#5DADE2', 'vfi': '#3498DB', 'overlay': 'rgba(255, 215, 0, 0.5)'}
         
         col1, col2 = st.columns(2)
-        display_charts(col1, metrics_risk_off, "Risk-Off (Força do Dólar)", risk_off_colors, overlay_price_series, st.sidebar.multiselect("Gráficos (Principal)", ALL_UNIQUE_ASSETS, default=ALL_UNIQUE_ASSETS, key='charts_main'), "XAUUSD")
-        display_charts(col2, metrics_risk_on, "Risk-On (Fraqueza do Dólar)", risk_on_colors, overlay_price_series, st.sidebar.multiselect("Gráficos (Principal)", ALL_UNIQUE_ASSETS, default=ALL_UNIQUE_ASSETS, key='charts_main_2'), "XAUUSD")
+        display_charts(col1, metrics_risk_off, "Risk-Off (Força do Dólar)", risk_off_colors, overlay_price_series_main, selected_charts_main, selected_overlay_main)
+        display_charts(col2, metrics_risk_on, "Risk-On (Fraqueza do Dólar)", risk_on_colors, overlay_price_series_main, selected_charts_main, selected_overlay_main)
 
 # --- Aba XAUUSD ---
-with tab_xauusd:
+with xauusd_tab_placeholder:
     st.header("Índice de Confirmação para o Ouro (Ponderado por Correlação)")
     st.markdown("Esta análise mede se o comportamento de outros ativos do mercado apoia ou contradiz o movimento atual do Ouro. Os pesos são a correlação dinâmica de cada ativo com o XAUUSD.")
     
     xauusd_basket = list(set(ALL_UNIQUE_ASSETS) - {'XAUUSD', 'XAGUSD'})
     
-    if 'XAUUSD_close' not in combined_main.columns:
-        st.warning("Dados do XAUUSD não disponíveis para calcular a correlação.")
-    else:
+    # Reutiliza os dados já baixados se possível
+    if 'combined_main' in locals() and not combined_main.empty and 'XAUUSD_close' in combined_main.columns:
+        
+        st.sidebar.header("Visualização (XAUUSD)")
+        selected_charts_xauusd = st.sidebar.multiselect("Gráficos a Exibir", ALL_CHARTS_LIST, default=ALL_CHARTS_LIST, key='charts_xauusd')
+
         # Calcular pesos de correlação dinâmica
         dynamic_weights = calculate_dynamic_correlation_weights(xauusd_basket, 'XAUUSD', combined_main, CORRELATION_WINDOW)
         
@@ -309,7 +320,9 @@ with tab_xauusd:
         xauusd_price_series_tab2 = combined_main['XAUUSD_close'].tail(NUM_CANDLES_DISPLAY)
         corr_colors = {'main': '#FFD700', 'accent': '#FFFACD', 'momentum': '#F0E68C', 'qualified': '#EEE8AA', 'conviction_z': '#FFECB3', 'vfi': '#FFC107', 'overlay': 'rgba(255, 255, 255, 0.6)'}
 
-        display_charts(st, metrics_xauusd_corr, "Índice de Confirmação (Correlação com XAUUSD)", corr_colors, xauusd_price_series_tab2, st.sidebar.multiselect("Gráficos (XAUUSD)", ALL_UNIQUE_ASSETS, default=ALL_UNIQUE_ASSETS, key='charts_xauusd'), "XAUUSD")
+        display_charts(st, metrics_xauusd_corr, "Índice de Confirmação (Correlação com XAUUSD)", corr_colors, xauusd_price_series_tab2, selected_charts_xauusd, "XAUUSD", is_dynamic_weights=True)
+    else:
+        st.warning("Dados do XAUUSD não disponíveis para calcular a correlação. Verifique se o ativo está na cesta principal.")
 
 st.caption("Feito com Streamlit • Dados via FinancialModelingPrep")
 
