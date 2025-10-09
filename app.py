@@ -56,6 +56,31 @@ MOMENTUM_PERIOD = st.sidebar.slider("Período ROC (Momentum)", 10, 50, 21)
 MOMENTUM_Z_WINDOW = st.sidebar.slider("Janela Z-Score (Momentum)", 50, 200, 100)
 VOLUME_MA_PERIOD = st.sidebar.slider("Janela Média de Volume (VFI)", 10, 50, 20)
 
+st.sidebar.header("Configurações de Visualização")
+
+NUM_COLUMNS = st.sidebar.radio("Layout das Colunas", [1, 2], index=1)
+
+OVERLAY_ASSET = st.sidebar.selectbox(
+    "Ativo para Sobreposição",
+    ["XAUUSD", "EURUSD", "GBPUSD"]
+)
+
+ALL_CHARTS = [
+    'Força Ponderada (Contagem)',
+    'Força Qualificada (Filtro)',
+    'Z-Score da Força Qualificada',
+    'Velocidade e Aceleração',
+    'Indicador de Clímax de Agressão',
+    'Índice de Momentum Agregado',
+    'Z-Score da Convicção',
+    'Índice de Força de Volume (VFI)'
+]
+SELECTED_CHARTS = st.sidebar.multiselect(
+    "Selecionar Gráficos para Exibir",
+    options=ALL_CHARTS,
+    default=ALL_CHARTS
+)
+
 
 # ===========================
 # Funções de Cálculo e Busca
@@ -162,19 +187,19 @@ def calculate_breadth_metrics(asset_weights: dict, combined_data: pd.DataFrame):
 
     return metrics
 
-def display_charts(column, metrics, title_prefix, theme_colors, overlay_price_series):
+def display_charts(column, metrics, title_prefix, theme_colors, overlay_price_series, selected_charts, overlay_asset):
     """Exibe todos os gráficos para uma cesta de métricas em uma coluna do Streamlit."""
     column.header(title_prefix)
 
     summaries = {
-        'Força Ponderada': "Confirma se a maioria do mercado apoia a direção do XAUUSD.",
-        'Força Qualificada': "Filtra o ruído e confirma se o movimento do XAUUSD tem convicção.",
-        'Z-Score da Força': "Alerta para exaustão ou pontos de viragem no XAUUSD quando atinge extremos.",
-        'Velocidade e Aceleração': "Mede a 'explosão' de um movimento; um pico de velocidade confirma um breakout no XAUUSD.",
-        'Indicador de Clímax': "Sinaliza a capitulação do lado contrário, indicando o fim de um pullback contra o XAUUSD.",
-        'Índice de Momentum': "Mostra a saúde da tendência; divergências com o preço do XAUUSD sinalizam fraqueza.",
-        'Z-Score da Convicção': "Identifica extremos de euforia/pânico (Contagem * Distância), ideal para reversões no XAUUSD.",
-        'Índice de Força de Volume (VFI)': "Valida um movimento no XAUUSD com participação institucional (Distância * Volume)."
+        'Força Ponderada (Contagem)': "Confirma se a maioria do mercado apoia a direção do ativo.",
+        'Força Qualificada (Filtro)': "Filtra o ruído e confirma se o movimento do ativo tem convicção.",
+        'Z-Score da Força Qualificada': "Alerta para exaustão ou pontos de viragem no ativo quando atinge extremos.",
+        'Velocidade e Aceleração': "Mede a 'explosão' de um movimento; um pico de velocidade confirma um breakout no ativo.",
+        'Indicador de Clímax de Agressão': "Sinaliza a capitulação do lado contrário, indicando o fim de um pullback contra o ativo.",
+        'Índice de Momentum Agregado': "Mostra a saúde da tendência; divergências com o preço do ativo sinalizam fraqueza.",
+        'Z-Score da Convicção': "Identifica extremos de euforia/pânico (Contagem * Distância), ideal para reversões no ativo.",
+        'Índice de Força de Volume (VFI)': "Valida um movimento no ativo com participação institucional (Distância * Volume)."
     }
     
     def create_fig_with_overlay(title):
@@ -184,91 +209,90 @@ def display_charts(column, metrics, title_prefix, theme_colors, overlay_price_se
             height=250,
             margin=dict(t=50, b=20, l=20, r=40),
             title=dict(text=title, x=0.01),
-            yaxis2=dict(title='XAUUSD', overlaying='y', side='right', showgrid=False, showticklabels=False, zeroline=False, color=theme_colors['overlay']),
+            yaxis2=dict(title=overlay_asset, overlaying='y', side='right', showgrid=False, showticklabels=False, zeroline=False, color=theme_colors['overlay']),
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
         )
         return fig
 
     # --- Gráficos ---
     
-    # Força Ponderada (Contagem Simples)
-    column.markdown(f"<p style='font-size:12px; color:grey;'><b>XAUUSD:</b> {summaries['Força Ponderada']}</p>", unsafe_allow_html=True)
-    for p, series in metrics['weighted_counts'].items():
-        fig = create_fig_with_overlay(f'Força Ponderada (Contagem EMA {p})')
-        fig.add_trace(go.Scatter(x=series.tail(NUM_CANDLES_DISPLAY).index, y=series.tail(NUM_CANDLES_DISPLAY).values, name='Força', mode="lines", fill="tozeroy", line_color=theme_colors['main'], opacity=0.7))
-        fig.add_trace(go.Scatter(x=overlay_price_series.index, y=overlay_price_series.values, name='XAUUSD', yaxis='y2', line=dict(color=theme_colors['overlay'], width=1.5, dash='dot')))
-        fig.update_layout(yaxis=dict(range=[0, 100]))
-        column.plotly_chart(fig, use_container_width=True)
+    if 'Força Ponderada (Contagem)' in selected_charts:
+        column.markdown(f"<p style='font-size:12px; color:grey;'><b>{overlay_asset}:</b> {summaries['Força Ponderada (Contagem)']}</p>", unsafe_allow_html=True)
+        for p, series in metrics['weighted_counts'].items():
+            fig = create_fig_with_overlay(f'Força Ponderada (Contagem EMA {p})')
+            fig.add_trace(go.Scatter(x=series.tail(NUM_CANDLES_DISPLAY).index, y=series.tail(NUM_CANDLES_DISPLAY).values, name='Força', mode="lines", fill="tozeroy", line_color=theme_colors['main'], opacity=0.7))
+            fig.add_trace(go.Scatter(x=overlay_price_series.index, y=overlay_price_series.values, name=overlay_asset, yaxis='y2', line=dict(color=theme_colors['overlay'], width=1.5, dash='dot')))
+            fig.update_layout(yaxis=dict(range=[0, 100]))
+            column.plotly_chart(fig, use_container_width=True)
 
-    # Força Qualificada
-    column.markdown(f"<p style='font-size:12px; color:grey;'><b>XAUUSD:</b> {summaries['Força Qualificada']}</p>", unsafe_allow_html=True)
-    for p, series in metrics['qualified_counts'].items():
-        fig = create_fig_with_overlay(f'Força Qualificada (Filtro EMA {p})')
-        fig.add_trace(go.Scatter(x=series.tail(NUM_CANDLES_DISPLAY).index, y=series.tail(NUM_CANDLES_DISPLAY).values, name='Qualificada', mode="lines", fill="tozeroy", line_color=theme_colors['qualified']))
-        fig.add_trace(go.Scatter(x=overlay_price_series.index, y=overlay_price_series.values, name='XAUUSD', yaxis='y2', line=dict(color=theme_colors['overlay'], width=1.5, dash='dot')))
-        fig.update_layout(yaxis=dict(range=[0, 100]))
-        column.plotly_chart(fig, use_container_width=True)
+    if 'Força Qualificada (Filtro)' in selected_charts:
+        column.markdown(f"<p style='font-size:12px; color:grey;'><b>{overlay_asset}:</b> {summaries['Força Qualificada (Filtro)']}</p>", unsafe_allow_html=True)
+        for p, series in metrics['qualified_counts'].items():
+            fig = create_fig_with_overlay(f'Força Qualificada (Filtro EMA {p})')
+            fig.add_trace(go.Scatter(x=series.tail(NUM_CANDLES_DISPLAY).index, y=series.tail(NUM_CANDLES_DISPLAY).values, name='Qualificada', mode="lines", fill="tozeroy", line_color=theme_colors['qualified']))
+            fig.add_trace(go.Scatter(x=overlay_price_series.index, y=overlay_price_series.values, name=overlay_asset, yaxis='y2', line=dict(color=theme_colors['overlay'], width=1.5, dash='dot')))
+            fig.update_layout(yaxis=dict(range=[0, 100]))
+            column.plotly_chart(fig, use_container_width=True)
         
-    # Z-Score da Força Qualificada
-    column.markdown(f"<p style='font-size:12px; color:grey;'><b>XAUUSD:</b> {summaries['Z-Score da Força']}</p>", unsafe_allow_html=True)
-    for p, series in metrics['qualified_zscore'].items():
-        fig = create_fig_with_overlay(f'Z-Score da Força Qualificada (EMA {p})')
-        fig.add_trace(go.Scatter(x=series.tail(NUM_CANDLES_DISPLAY).index, y=series.tail(NUM_CANDLES_DISPLAY).values, name='Z-Score', line=dict(color=theme_colors['accent'])))
-        fig.add_trace(go.Scatter(x=overlay_price_series.index, y=overlay_price_series.values, name='XAUUSD', yaxis='y2', line=dict(color=theme_colors['overlay'], width=1.5, dash='dot')))
-        fig.add_hline(y=2, line_dash="dot", line_color="white", opacity=0.5); fig.add_hline(y=-2, line_dash="dot", line_color="white", opacity=0.5)
-        fig.update_layout(yaxis=dict(range=[-3.5, 3.5]))
-        column.plotly_chart(fig, use_container_width=True)
+    if 'Z-Score da Força Qualificada' in selected_charts:
+        column.markdown(f"<p style='font-size:12px; color:grey;'><b>{overlay_asset}:</b> {summaries['Z-Score da Força Qualificada']}</p>", unsafe_allow_html=True)
+        for p, series in metrics['qualified_zscore'].items():
+            fig = create_fig_with_overlay(f'Z-Score da Força Qualificada (EMA {p})')
+            fig.add_trace(go.Scatter(x=series.tail(NUM_CANDLES_DISPLAY).index, y=series.tail(NUM_CANDLES_DISPLAY).values, name='Z-Score', line=dict(color=theme_colors['accent'])))
+            fig.add_trace(go.Scatter(x=overlay_price_series.index, y=overlay_price_series.values, name=overlay_asset, yaxis='y2', line=dict(color=theme_colors['overlay'], width=1.5, dash='dot')))
+            fig.add_hline(y=2, line_dash="dot", line_color="white", opacity=0.5); fig.add_hline(y=-2, line_dash="dot", line_color="white", opacity=0.5)
+            fig.update_layout(yaxis=dict(range=[-3.5, 3.5]))
+            column.plotly_chart(fig, use_container_width=True)
 
-    # Velocidade e Aceleração
-    if MA_PERIODS:
-        column.markdown(f"<p style='font-size:12px; color:grey;'><b>XAUUSD:</b> {summaries['Velocidade e Aceleração']}</p>", unsafe_allow_html=True)
+    if 'Velocidade e Aceleração' in selected_charts and MA_PERIODS:
+        column.markdown(f"<p style='font-size:12px; color:grey;'><b>{overlay_asset}:</b> {summaries['Velocidade e Aceleração']}</p>", unsafe_allow_html=True)
         p_short = MA_PERIODS[0]
         roc_series = metrics['rocs'][p_short].tail(NUM_CANDLES_DISPLAY)
         fig_roc = create_fig_with_overlay(f'Velocidade (ROC EMA {p_short})')
         fig_roc.add_trace(go.Bar(x=roc_series.index, y=roc_series.values, name='ROC', marker_color=['green' if v >= 0 else 'red' for v in roc_series.values]))
-        fig_roc.add_trace(go.Scatter(x=overlay_price_series.index, y=overlay_price_series.values, name='XAUUSD', yaxis='y2', line=dict(color=theme_colors['overlay'], width=1.5, dash='dot')))
+        fig_roc.add_trace(go.Scatter(x=overlay_price_series.index, y=overlay_price_series.values, name=overlay_asset, yaxis='y2', line=dict(color=theme_colors['overlay'], width=1.5, dash='dot')))
         fig_roc.update_layout(height=200)
         column.plotly_chart(fig_roc, use_container_width=True)
         
-    # Indicador de Clímax
-    column.markdown(f"<p style='font-size:12px; color:grey;'><b>XAUUSD:</b> {summaries['Indicador de Clímax']}</p>", unsafe_allow_html=True)
-    buyer_series = metrics['buyer_climax_zscore'].tail(NUM_CANDLES_DISPLAY).clip(lower=0)
-    seller_series = metrics['seller_climax_zscore'].tail(NUM_CANDLES_DISPLAY).clip(lower=0)
-    fig_climax = create_fig_with_overlay('Indicador de Clímax de Agressão')
-    fig_climax.add_trace(go.Bar(x=buyer_series.index, y=buyer_series.values, name='Clímax Comprador', marker_color='green'))
-    fig_climax.add_trace(go.Bar(x=seller_series.index, y=seller_series.values, name='Clímax Vendedor', marker_color='red'))
-    fig_climax.add_trace(go.Scatter(x=overlay_price_series.index, y=overlay_price_series.values, name='XAUUSD', yaxis='y2', line=dict(color=theme_colors['overlay'], width=1.5, dash='dot')))
-    fig_climax.add_hline(y=3, line_dash="dot", line_color="white", annotation_text="Limiar de Clímax (+3σ)")
-    fig_climax.update_layout(barmode='relative')
-    column.plotly_chart(fig_climax, use_container_width=True)
+    if 'Indicador de Clímax de Agressão' in selected_charts:
+        column.markdown(f"<p style='font-size:12px; color:grey;'><b>{overlay_asset}:</b> {summaries['Indicador de Clímax de Agressão']}</p>", unsafe_allow_html=True)
+        buyer_series = metrics['buyer_climax_zscore'].tail(NUM_CANDLES_DISPLAY).clip(lower=0)
+        seller_series = metrics['seller_climax_zscore'].tail(NUM_CANDLES_DISPLAY).clip(lower=0)
+        fig_climax = create_fig_with_overlay('Indicador de Clímax de Agressão')
+        fig_climax.add_trace(go.Bar(x=buyer_series.index, y=buyer_series.values, name='Clímax Comprador', marker_color='green'))
+        fig_climax.add_trace(go.Bar(x=seller_series.index, y=seller_series.values, name='Clímax Vendedor', marker_color='red'))
+        fig_climax.add_trace(go.Scatter(x=overlay_price_series.index, y=overlay_price_series.values, name=overlay_asset, yaxis='y2', line=dict(color=theme_colors['overlay'], width=1.5, dash='dot')))
+        fig_climax.add_hline(y=3, line_dash="dot", line_color="white", annotation_text="Limiar de Clímax (+3σ)")
+        fig_climax.update_layout(barmode='relative')
+        column.plotly_chart(fig_climax, use_container_width=True)
 
-    # Índice de Momentum
-    column.markdown(f"<p style='font-size:12px; color:grey;'><b>XAUUSD:</b> {summaries['Índice de Momentum']}</p>", unsafe_allow_html=True)
-    series = metrics['aggregate_momentum_index'].tail(NUM_CANDLES_DISPLAY)
-    fig_mom = create_fig_with_overlay('Índice de Momentum Agregado')
-    fig_mom.add_trace(go.Scatter(x=series.index, y=series.values, name='Momentum', line=dict(color=theme_colors['momentum']), fill='tozeroy'))
-    fig_mom.add_trace(go.Scatter(x=overlay_price_series.index, y=overlay_price_series.values, name='XAUUSD', yaxis='y2', line=dict(color=theme_colors['overlay'], width=1.5, dash='dot')))
-    fig_mom.add_hline(y=0, line_dash="dash", line_color="grey")
-    column.plotly_chart(fig_mom, use_container_width=True)
+    if 'Índice de Momentum Agregado' in selected_charts:
+        column.markdown(f"<p style='font-size:12px; color:grey;'><b>{overlay_asset}:</b> {summaries['Índice de Momentum Agregado']}</p>", unsafe_allow_html=True)
+        series = metrics['aggregate_momentum_index'].tail(NUM_CANDLES_DISPLAY)
+        fig_mom = create_fig_with_overlay('Índice de Momentum Agregado')
+        fig_mom.add_trace(go.Scatter(x=series.index, y=series.values, name='Momentum', line=dict(color=theme_colors['momentum']), fill='tozeroy'))
+        fig_mom.add_trace(go.Scatter(x=overlay_price_series.index, y=overlay_price_series.values, name=overlay_asset, yaxis='y2', line=dict(color=theme_colors['overlay'], width=1.5, dash='dot')))
+        fig_mom.add_hline(y=0, line_dash="dash", line_color="grey")
+        column.plotly_chart(fig_mom, use_container_width=True)
     
-    # Z-Score da Convicção
-    column.markdown(f"<p style='font-size:12px; color:grey;'><b>XAUUSD:</b> {summaries['Z-Score da Convicção']}</p>", unsafe_allow_html=True)
-    for p, series in metrics['conviction_zscore'].items():
-        fig = create_fig_with_overlay(f'Z-Score da Convicção (EMA {p})')
-        fig.add_trace(go.Scatter(x=series.tail(NUM_CANDLES_DISPLAY).index, y=series.tail(NUM_CANDLES_DISPLAY).values, name='Convicção', line=dict(color=theme_colors['conviction_z'])))
-        fig.add_trace(go.Scatter(x=overlay_price_series.index, y=overlay_price_series.values, name='XAUUSD', yaxis='y2', line=dict(color=theme_colors['overlay'], width=1.5, dash='dot')))
-        fig.add_hline(y=2, line_dash="dot", line_color="white", opacity=0.5); fig.add_hline(y=-2, line_dash="dot", line_color="white", opacity=0.5)
-        fig.update_layout(yaxis=dict(range=[-3.5, 3.5]))
-        column.plotly_chart(fig, use_container_width=True)
+    if 'Z-Score da Convicção' in selected_charts:
+        column.markdown(f"<p style='font-size:12px; color:grey;'><b>{overlay_asset}:</b> {summaries['Z-Score da Convicção']}</p>", unsafe_allow_html=True)
+        for p, series in metrics['conviction_zscore'].items():
+            fig = create_fig_with_overlay(f'Z-Score da Convicção (EMA {p})')
+            fig.add_trace(go.Scatter(x=series.tail(NUM_CANDLES_DISPLAY).index, y=series.tail(NUM_CANDLES_DISPLAY).values, name='Convicção', line=dict(color=theme_colors['conviction_z'])))
+            fig.add_trace(go.Scatter(x=overlay_price_series.index, y=overlay_price_series.values, name=overlay_asset, yaxis='y2', line=dict(color=theme_colors['overlay'], width=1.5, dash='dot')))
+            fig.add_hline(y=2, line_dash="dot", line_color="white", opacity=0.5); fig.add_hline(y=-2, line_dash="dot", line_color="white", opacity=0.5)
+            fig.update_layout(yaxis=dict(range=[-3.5, 3.5]))
+            column.plotly_chart(fig, use_container_width=True)
         
-    # Índice de Força de Volume (VFI)
-    column.markdown(f"<p style='font-size:12px; color:grey;'><b>XAUUSD:</b> {summaries['Índice de Força de Volume (VFI)']}</p>", unsafe_allow_html=True)
-    for p, series in metrics['volume_force_indices'].items():
-        fig = create_fig_with_overlay(f'Índice de Força de Volume (VFI EMA {p})')
-        fig.add_trace(go.Scatter(x=series.tail(NUM_CANDLES_DISPLAY).index, y=series.tail(NUM_CANDLES_DISPLAY).values, name='VFI', mode="lines", line_color=theme_colors['vfi'], fill='tozeroy'))
-        fig.add_trace(go.Scatter(x=overlay_price_series.index, y=overlay_price_series.values, name='XAUUSD', yaxis='y2', line=dict(color=theme_colors['overlay'], width=1.5, dash='dot')))
-        fig.add_hline(y=0, line_dash="dash", line_color="grey")
-        column.plotly_chart(fig, use_container_width=True)
+    if 'Índice de Força de Volume (VFI)' in selected_charts:
+        column.markdown(f"<p style='font-size:12px; color:grey;'><b>{overlay_asset}:</b> {summaries['Índice de Força de Volume (VFI)']}</p>", unsafe_allow_html=True)
+        for p, series in metrics['volume_force_indices'].items():
+            fig = create_fig_with_overlay(f'Índice de Força de Volume (VFI EMA {p})')
+            fig.add_trace(go.Scatter(x=series.tail(NUM_CANDLES_DISPLAY).index, y=series.tail(NUM_CANDLES_DISPLAY).values, name='VFI', mode="lines", line_color=theme_colors['vfi'], fill='tozeroy'))
+            fig.add_trace(go.Scatter(x=overlay_price_series.index, y=overlay_price_series.values, name=overlay_asset, yaxis='y2', line=dict(color=theme_colors['overlay'], width=1.5, dash='dot')))
+            fig.add_hline(y=0, line_dash="dash", line_color="grey")
+            column.plotly_chart(fig, use_container_width=True)
 
 
 # ===========================
@@ -284,10 +308,11 @@ if combined.empty:
     st.error("Nenhum dado disponível. Verifique a API ou os símbolos dos ativos.")
     st.stop()
 
-# --- Extrair preço do XAUUSD para sobreposição ---
-xauusd_price_series = pd.Series(dtype=float)
-if 'XAUUSD_close' in combined.columns:
-    xauusd_price_series = combined['XAUUSD_close'].tail(NUM_CANDLES_DISPLAY)
+# --- Extrair preço do ativo para sobreposição ---
+overlay_price_series = pd.Series(dtype=float)
+overlay_col_name = f"{OVERLAY_ASSET}_close"
+if overlay_col_name in combined.columns:
+    overlay_price_series = combined[overlay_col_name].tail(NUM_CANDLES_DISPLAY)
 
 # --- Calcular métricas para ambas as cestas ---
 metrics_risk_off = calculate_breadth_metrics(RISK_OFF_ASSETS, combined)
@@ -299,9 +324,14 @@ risk_on_colors = {'main': '#2ECC71', 'accent': '#ABEBC6', 'momentum': '#76D7C4',
 
 
 # --- Visualização ---
-col1, col2 = st.columns(2)
-display_charts(col1, metrics_risk_off, "Risk-Off (Força do Dólar)", risk_off_colors, xauusd_price_series)
-display_charts(col2, metrics_risk_on, "Risk-On (Fraqueza do Dólar)", risk_on_colors, xauusd_price_series)
+if NUM_COLUMNS == 2:
+    col1, col2 = st.columns(2)
+    display_charts(col1, metrics_risk_off, "Risk-Off (Força do Dólar)", risk_off_colors, overlay_price_series, SELECTED_CHARTS, OVERLAY_ASSET)
+    display_charts(col2, metrics_risk_on, "Risk-On (Fraqueza do Dólar)", risk_on_colors, overlay_price_series, SELECTED_CHARTS, OVERLAY_ASSET)
+else:
+    display_charts(st, metrics_risk_off, "Risk-Off (Força do Dólar)", risk_off_colors, overlay_price_series, SELECTED_CHARTS, OVERLAY_ASSET)
+    st.divider()
+    display_charts(st, metrics_risk_on, "Risk-On (Fraqueza do Dólar)", risk_on_colors, overlay_price_series, SELECTED_CHARTS, OVERLAY_ASSET)
 
 
 st.caption("Feito com Streamlit • Dados via FinancialModelingPrep")
