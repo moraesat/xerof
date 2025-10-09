@@ -140,7 +140,7 @@ def calculate_breadth_metrics(asset_weights: dict, combined_data: pd.DataFrame):
     # --- Cálculos Derivados ---
     metrics['z_scores'], metrics['rocs'], metrics['accelerations'] = {}, {}, {}
     metrics['conviction_zscore'] = {}
-    metrics['qualified_zscore'] = {} # NOVO
+    metrics['qualified_zscore'] = {} 
     for p in MA_PERIODS:
         series_wc = metrics['weighted_counts'][p]
         metrics['z_scores'][p] = calculate_zscore(series_wc, Z_SCORE_WINDOW)
@@ -151,7 +151,7 @@ def calculate_breadth_metrics(asset_weights: dict, combined_data: pd.DataFrame):
         metrics['conviction_zscore'][p] = calculate_zscore(conviction_index, Z_SCORE_WINDOW)
 
         series_qc = metrics['qualified_counts'][p]
-        metrics['qualified_zscore'][p] = calculate_zscore(series_qc, Z_SCORE_WINDOW) # NOVO
+        metrics['qualified_zscore'][p] = calculate_zscore(series_qc, Z_SCORE_WINDOW) 
 
     return metrics
 
@@ -159,20 +159,26 @@ def display_charts(column, metrics, title_prefix, theme_colors):
     """Exibe todos os gráficos para uma cesta de métricas em uma coluna do Streamlit."""
     column.header(title_prefix)
     
-    # Gráfico 1: Força Ponderada Qualificada
+    # Gráfico 1: Força Ponderada (Contagem Simples) - RE-ADICIONADO
+    for p, series in metrics['weighted_counts'].items():
+        fig = go.Figure(go.Scatter(x=series.tail(NUM_CANDLES_DISPLAY).index, y=series.tail(NUM_CANDLES_DISPLAY).values, mode="lines", fill="tozeroy", line_color=theme_colors['main'], opacity=0.7))
+        fig.update_layout(title=f'Força Ponderada (Contagem Simples EMA {p})', yaxis=dict(range=[0, 100]), height=250, margin=dict(t=30, b=10, l=10, r=10), template="plotly_dark")
+        column.plotly_chart(fig, use_container_width=True)
+
+    # Gráfico 2: Força Ponderada Qualificada
     for p, series in metrics['qualified_counts'].items():
         fig = go.Figure(go.Scatter(x=series.tail(NUM_CANDLES_DISPLAY).index, y=series.tail(NUM_CANDLES_DISPLAY).values, mode="lines", fill="tozeroy", line_color=theme_colors['qualified']))
         fig.update_layout(title=f'Força Qualificada (Filtro EMA {p})', yaxis=dict(range=[0, 100]), height=250, margin=dict(t=30, b=10, l=10, r=10), template="plotly_dark")
         column.plotly_chart(fig, use_container_width=True)
         
-    # Gráfico 2: Z-Score da Força Qualificada
+    # Gráfico 3: Z-Score da Força Qualificada
     for p, series in metrics['qualified_zscore'].items():
         fig = go.Figure(go.Scatter(x=series.tail(NUM_CANDLES_DISPLAY).index, y=series.tail(NUM_CANDLES_DISPLAY).values, line=dict(color=theme_colors['accent'])))
         fig.add_hline(y=2, line_dash="dot", line_color="white", opacity=0.5); fig.add_hline(y=-2, line_dash="dot", line_color="white", opacity=0.5)
         fig.update_layout(title=f'Z-Score da Força Qualificada (EMA {p})', yaxis=dict(range=[-3.5, 3.5]), height=250, margin=dict(t=30, b=10, l=10, r=10), template="plotly_dark")
         column.plotly_chart(fig, use_container_width=True)
 
-    # Gráfico 3: Velocidade e Aceleração
+    # Gráfico 4: Velocidade e Aceleração
     if MA_PERIODS:
         p_short = MA_PERIODS[0]
         roc_series = metrics['rocs'][p_short].tail(NUM_CANDLES_DISPLAY)
@@ -185,7 +191,7 @@ def display_charts(column, metrics, title_prefix, theme_colors):
         fig_accel.update_layout(title=f'Aceleração (Contagem Simples EMA {p_short})', height=200, margin=dict(t=30, b=10, l=10, r=10), template="plotly_dark")
         column.plotly_chart(fig_accel, use_container_width=True)
 
-    # Gráfico 4: Indicador de Clímax
+    # Gráfico 5: Indicador de Clímax
     buyer_series = metrics['buyer_climax_zscore'].tail(NUM_CANDLES_DISPLAY).clip(lower=0)
     seller_series = metrics['seller_climax_zscore'].tail(NUM_CANDLES_DISPLAY).clip(lower=0)
     fig = go.Figure()
@@ -195,14 +201,14 @@ def display_charts(column, metrics, title_prefix, theme_colors):
     fig.update_layout(barmode='relative', title='Indicador de Clímax de Agressão', height=250, margin=dict(t=30, b=10, l=10, r=10), template="plotly_dark")
     column.plotly_chart(fig, use_container_width=True)
 
-    # Gráfico 5: Índice de Momentum
+    # Gráfico 6: Índice de Momentum
     series = metrics['aggregate_momentum_index'].tail(NUM_CANDLES_DISPLAY)
     fig = go.Figure(go.Scatter(x=series.index, y=series.values, line=dict(color=theme_colors['momentum']), fill='tozeroy'))
     fig.add_hline(y=0, line_dash="dash", line_color="grey")
     fig.update_layout(title='Índice de Momentum Agregado', height=250, margin=dict(t=30, b=10, l=10, r=10), template="plotly_dark")
     column.plotly_chart(fig, use_container_width=True)
     
-    # Gráfico 6: Z-Score da Convicção (Contagem * Distância)
+    # Gráfico 7: Z-Score da Convicção (Contagem * Distância)
     for p, series in metrics['conviction_zscore'].items():
         fig = go.Figure(go.Scatter(x=series.tail(NUM_CANDLES_DISPLAY).index, y=series.tail(NUM_CANDLES_DISPLAY).values, line=dict(color=theme_colors['conviction_z'])))
         fig.add_hline(y=2, line_dash="dot", line_color="white", opacity=0.5); fig.add_hline(y=-2, line_dash="dot", line_color="white", opacity=0.5)
