@@ -139,11 +139,17 @@ def calculate_breadth_metrics(asset_weights: dict, combined_data: pd.DataFrame):
     
     # --- Cálculos Derivados ---
     metrics['z_scores'], metrics['rocs'], metrics['accelerations'] = {}, {}, {}
+    metrics['conviction_zscore'] = {} # NOVO
     for p in MA_PERIODS:
         series = metrics['weighted_counts'][p]
         metrics['z_scores'][p] = calculate_zscore(series, Z_SCORE_WINDOW)
         metrics['rocs'][p] = series.diff()
         metrics['accelerations'][p] = metrics['rocs'][p].diff()
+        
+        # Cálculo do Z-Score de Convicção (NOVO)
+        conviction_index = (metrics['weighted_counts'][p] / 100) * metrics['weighted_distance_indices'][p]
+        metrics['conviction_zscore'][p] = calculate_zscore(conviction_index, Z_SCORE_WINDOW)
+
 
     return metrics
 
@@ -194,11 +200,18 @@ def display_charts(column, metrics, title_prefix, theme_colors):
     fig.update_layout(title='Índice de Momentum Agregado', height=250, margin=dict(t=30, b=10, l=10, r=10), template="plotly_dark")
     column.plotly_chart(fig, use_container_width=True)
 
-    # Gráfico 6: Índice de Distância Ponderada (NOVO)
+    # Gráfico 6: Índice de Distância Ponderada
     for p, series in metrics['weighted_distance_indices'].items():
         fig = go.Figure(go.Scatter(x=series.tail(NUM_CANDLES_DISPLAY).index, y=series.tail(NUM_CANDLES_DISPLAY).values, mode="lines", line_color=theme_colors['distance'], fill='tozeroy'))
         fig.add_hline(y=0, line_dash="dash", line_color="grey")
-        fig.update_layout(title=f'Índice de Distância (Convicção EMA {p})', yaxis_title="Distância Ponderada (ATR)", height=250, margin=dict(t=30, b=10, l=10, r=10), template="plotly_dark")
+        fig.update_layout(title=f'Índice de Distância (Convicção EMA {p})', yaxis_title="Distância (ATR)", height=250, margin=dict(t=30, b=10, l=10, r=10), template="plotly_dark")
+        column.plotly_chart(fig, use_container_width=True)
+        
+    # Gráfico 7: Z-Score da Convicção (NOVO)
+    for p, series in metrics['conviction_zscore'].items():
+        fig = go.Figure(go.Scatter(x=series.tail(NUM_CANDLES_DISPLAY).index, y=series.tail(NUM_CANDLES_DISPLAY).values, line=dict(color=theme_colors['conviction_z'])))
+        fig.add_hline(y=2, line_dash="dot", line_color="white", opacity=0.5); fig.add_hline(y=-2, line_dash="dot", line_color="white", opacity=0.5)
+        fig.update_layout(title=f'Z-Score da Convicção (EMA {p})', yaxis=dict(range=[-3.5, 3.5]), height=250, margin=dict(t=30, b=10, l=10, r=10), template="plotly_dark")
         column.plotly_chart(fig, use_container_width=True)
 
 
@@ -220,8 +233,8 @@ metrics_risk_off = calculate_breadth_metrics(RISK_OFF_ASSETS, combined)
 metrics_risk_on = calculate_breadth_metrics(RISK_ON_ASSETS, combined)
 
 # --- Definição dos Temas de Cores ---
-risk_off_colors = {'main': '#E74C3C', 'accent': '#F1948A', 'momentum': '#D98880', 'distance': '#F5B041'}
-risk_on_colors = {'main': '#2ECC71', 'accent': '#ABEBC6', 'momentum': '#76D7C4', 'distance': '#5DADE2'}
+risk_off_colors = {'main': '#E74C3C', 'accent': '#F1948A', 'momentum': '#D98880', 'distance': '#F5B041', 'conviction_z': '#FFA07A'}
+risk_on_colors = {'main': '#2ECC71', 'accent': '#ABEBC6', 'momentum': '#76D7C4', 'distance': '#5DADE2', 'conviction_z': '#87CEEB'}
 
 
 # --- Visualização ---
