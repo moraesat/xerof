@@ -211,19 +211,32 @@ def display_charts(column, metrics, title_prefix, theme_colors, overlay_price_da
         p_short = MA_PERIODS[0] if MA_PERIODS else None
         
         if p_short and not overlay_price_data.empty:
-            buyer_climax_condition = metrics['buyer_climax_zscore'] > 1
-            seller_climax_condition = metrics['seller_climax_zscore'] > 1
+            # --- CONDIÇÕES BASE ---
             asset_is_up = overlay_price_data['close'] > overlay_price_data['open']
             
-            strong_context = (metrics['weighted_counts'][p_short] > 50) & (metrics['qualified_counts'][p_short] > 50)
-            weak_context = (metrics['weighted_counts'][p_short] < 50) & (metrics['qualified_counts'][p_short] < 50)
+            # 1. CONDIÇÃO DE CLÍMAX
+            buyer_climax_is_high = metrics['buyer_climax_zscore'] > 1
+            seller_climax_is_high = metrics['seller_climax_zscore'] > 1
+            
+            # 2. CONDIÇÃO DE DOMINÂNCIA DE AGRESSÃO
+            total_aggression = metrics['aggression_buyer'] + metrics['aggression_seller']
+            total_aggression_safe = total_aggression.replace(0, np.nan)
+            
+            buyer_aggression_is_dominant = (metrics['aggression_buyer'] / total_aggression_safe) > 0.7
+            seller_aggression_is_dominant = (metrics['aggression_seller'] / total_aggression_safe) > 0.7
 
-            # Divergência de Topo (Distribuição): Candle de ALTA, mas com clímax de agressão VENDEDORA, em contexto de FORÇA.
-            topo_divergence = asset_is_up & seller_climax_condition & strong_context
+            # 3. CONDIÇÃO DE CONTEXTO DE FORÇA (Z-SCORE QUALIFICADO)
+            context_is_strong = metrics['qualified_zscore'][p_short] > 1
+            context_is_weak = metrics['qualified_zscore'][p_short] < -1
+
+            # --- LÓGICA DE DIVERGÊNCIA REFINADA ---
+
+            # Divergência de TOPO (Venda): Esforço de Compra (clímax comprador dominante) não resulta em alta (candle fecha em baixa), em contexto de sobrecompra.
+            topo_divergence = buyer_climax_is_high & buyer_aggression_is_dominant & ~asset_is_up & context_is_strong
             topo_points = overlay_price_data[topo_divergence]
             
-            # Divergência de Fundo (Absorção): Candle de BAIXA, mas com clímax de agressão COMPRADORA, em contexto de FRAQUEZA.
-            fundo_divergence = ~asset_is_up & buyer_climax_condition & weak_context
+            # Divergência de FUNDO (Compra): Esforço de Venda (clímax vendedor dominante) não resulta em baixa (candle fecha em alta), em contexto de sobrevenda.
+            fundo_divergence = seller_climax_is_high & seller_aggression_is_dominant & asset_is_up & context_is_weak
             fundo_points = overlay_price_data[fundo_divergence]
 
             fig_div = go.Figure()
