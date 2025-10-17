@@ -208,13 +208,18 @@ def display_charts(column, metrics, title_prefix, theme_colors, overlay_price_da
     if 'Indicador de Divergência de Agressão' in selected_charts:
         column.markdown(f"<p style='font-size:12px; color:grey;'><b>{overlay_asset}:</b> {summaries['Indicador de Divergência de Agressão']}</p>", unsafe_allow_html=True)
         
+        # Condições de Agressão e de Clímax
         agg_is_buyer = metrics['aggression_buyer'] > metrics['aggression_seller']
+        buyer_climax_condition = metrics['buyer_climax_zscore'] > 1
+        seller_climax_condition = metrics['seller_climax_zscore'] > 1
         asset_is_up = overlay_price_data['close'] > overlay_price_data['open']
         
-        topo_divergence = agg_is_buyer & ~asset_is_up
+        # Divergência de Topo: Agressão compradora com clímax > 1, mas o ativo fecha em baixa
+        topo_divergence = agg_is_buyer & ~asset_is_up & buyer_climax_condition
         topo_points = overlay_price_data[topo_divergence]
         
-        fundo_divergence = ~agg_is_buyer & asset_is_up
+        # Divergência de Fundo: Agressão vendedora com clímax > 1, mas o ativo fecha em alta
+        fundo_divergence = ~agg_is_buyer & asset_is_up & seller_climax_condition
         fundo_points = overlay_price_data[fundo_divergence]
 
         fig_div = go.Figure()
