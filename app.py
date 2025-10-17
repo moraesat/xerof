@@ -211,31 +211,23 @@ def display_charts(column, metrics, title_prefix, theme_colors, overlay_price_da
         p_short = MA_PERIODS[0] if MA_PERIODS else None
         
         if p_short and not overlay_price_data.empty:
-            # --- CONDIÇÕES BASE ---
             asset_is_up = overlay_price_data['close'] > overlay_price_data['open']
             
-            # 1. CONDIÇÃO DE CLÍMAX
             buyer_climax_is_high = metrics['buyer_climax_zscore'] > 1
             seller_climax_is_high = metrics['seller_climax_zscore'] > 1
             
-            # 2. CONDIÇÃO DE DOMINÂNCIA DE AGRESSÃO
             total_aggression = metrics['aggression_buyer'] + metrics['aggression_seller']
             total_aggression_safe = total_aggression.replace(0, np.nan)
             
             buyer_aggression_is_dominant = (metrics['aggression_buyer'] / total_aggression_safe) > 0.7
             seller_aggression_is_dominant = (metrics['aggression_seller'] / total_aggression_safe) > 0.7
 
-            # 3. CONDIÇÃO DE CONTEXTO DE FORÇA (Z-SCORE QUALIFICADO)
             context_is_strong = metrics['qualified_zscore'][p_short] > 1
             context_is_weak = metrics['qualified_zscore'][p_short] < -1
 
-            # --- LÓGICA DE DIVERGÊNCIA REFINADA ---
-
-            # Divergência de TOPO (Venda): Esforço de Compra (clímax comprador dominante) não resulta em alta (candle fecha em baixa), em contexto de sobrecompra.
             topo_divergence = buyer_climax_is_high & buyer_aggression_is_dominant & ~asset_is_up & context_is_strong
             topo_points = overlay_price_data[topo_divergence]
             
-            # Divergência de FUNDO (Compra): Esforço de Venda (clímax vendedor dominante) não resulta em baixa (candle fecha em alta), em contexto de sobrevenda.
             fundo_divergence = seller_climax_is_high & seller_aggression_is_dominant & asset_is_up & context_is_weak
             fundo_points = overlay_price_data[fundo_divergence]
 
@@ -244,38 +236,37 @@ def display_charts(column, metrics, title_prefix, theme_colors, overlay_price_da
             fig_div.add_trace(go.Scatter(x=topo_points.index, y=topo_points['high'], mode='markers', marker=dict(symbol='triangle-down', color='red', size=10), name='Div. de Topo'))
             fig_div.add_trace(go.Scatter(x=fundo_points.index, y=fundo_points['low'], mode='markers', marker=dict(symbol='triangle-up', color='lime', size=10), name='Div. de Fundo'))
             fig_div.update_layout(title='Indicador de Divergência de Agressão', height=300, margin=dict(t=30, b=10, l=10, r=10), template="plotly_dark", xaxis_rangeslider_visible=False)
-            column.plotly_chart(fig_div, use_container_width=True)
+            column.plotly_chart(fig_div, use_container_width=True, key=f"{title_prefix}_div_chart")
         else:
             column.warning("Insira pelo menos um período de MA para o Indicador de Divergência.")
 
-
     if 'Força Ponderada (Contagem)' in selected_charts:
         column.markdown(f"<p style='font-size:12px; color:grey;'><b>{overlay_asset}:</b> {summaries['Força Ponderada (Contagem)']}</p>", unsafe_allow_html=True)
-        for p, series in metrics['weighted_counts'].items():
+        for i, (p, series) in enumerate(metrics['weighted_counts'].items()):
             fig = create_fig_with_overlay(f'Força Ponderada (Contagem EMA {p})')
             fig.add_trace(go.Scatter(x=series.tail(NUM_CANDLES_DISPLAY).index, y=series.tail(NUM_CANDLES_DISPLAY).values, name='Força', mode="lines", fill="tozeroy", line_color=theme_colors['main'], opacity=0.7))
             fig.add_trace(go.Scatter(x=overlay_price_data['close'].index, y=overlay_price_data['close'].values, name=overlay_asset, yaxis='y2', line=dict(color=theme_colors['overlay'], width=1.5, dash='dot')))
             if not is_dynamic_weights: fig.update_layout(yaxis=dict(range=[0, 100]))
-            column.plotly_chart(fig, use_container_width=True)
+            column.plotly_chart(fig, use_container_width=True, key=f"{title_prefix}_wc_{p}_{i}")
 
     if 'Força Qualificada (Filtro)' in selected_charts:
         column.markdown(f"<p style='font-size:12px; color:grey;'><b>{overlay_asset}:</b> {summaries['Força Qualificada (Filtro)']}</p>", unsafe_allow_html=True)
-        for p, series in metrics['qualified_counts'].items():
+        for i, (p, series) in enumerate(metrics['qualified_counts'].items()):
             fig = create_fig_with_overlay(f'Força Qualificada (Filtro EMA {p})')
             fig.add_trace(go.Scatter(x=series.tail(NUM_CANDLES_DISPLAY).index, y=series.tail(NUM_CANDLES_DISPLAY).values, name='Qualificada', mode="lines", fill="tozeroy", line_color=theme_colors['qualified']))
             fig.add_trace(go.Scatter(x=overlay_price_data['close'].index, y=overlay_price_data['close'].values, name=overlay_asset, yaxis='y2', line=dict(color=theme_colors['overlay'], width=1.5, dash='dot')))
             if not is_dynamic_weights: fig.update_layout(yaxis=dict(range=[0, 100]))
-            column.plotly_chart(fig, use_container_width=True)
+            column.plotly_chart(fig, use_container_width=True, key=f"{title_prefix}_qc_{p}_{i}")
     
     if 'Z-Score da Força Qualificada' in selected_charts:
         column.markdown(f"<p style='font-size:12px; color:grey;'><b>{overlay_asset}:</b> {summaries['Z-Score da Força Qualificada']}</p>", unsafe_allow_html=True)
-        for p, series in metrics['qualified_zscore'].items():
+        for i, (p, series) in enumerate(metrics['qualified_zscore'].items()):
             fig = create_fig_with_overlay(f'Z-Score da Força Qualificada (EMA {p})')
             fig.add_trace(go.Scatter(x=series.tail(NUM_CANDLES_DISPLAY).index, y=series.tail(NUM_CANDLES_DISPLAY).values, name='Z-Score', line=dict(color=theme_colors['accent'])))
             fig.add_trace(go.Scatter(x=overlay_price_data['close'].index, y=overlay_price_data['close'].values, name=overlay_asset, yaxis='y2', line=dict(color=theme_colors['overlay'], width=1.5, dash='dot')))
             fig.add_hline(y=2, line_dash="dot", line_color="white", opacity=0.5); fig.add_hline(y=-2, line_dash="dot", line_color="white", opacity=0.5)
             fig.update_layout(yaxis=dict(range=[-3.5, 3.5]))
-            column.plotly_chart(fig, use_container_width=True)
+            column.plotly_chart(fig, use_container_width=True, key=f"{title_prefix}_zqc_{p}_{i}")
 
     if 'Velocidade e Aceleração' in selected_charts and MA_PERIODS:
         column.markdown(f"<p style='font-size:12px; color:grey;'><b>{overlay_asset}:</b> {summaries['Velocidade e Aceleração']}</p>", unsafe_allow_html=True)
@@ -285,7 +276,7 @@ def display_charts(column, metrics, title_prefix, theme_colors, overlay_price_da
         fig_roc.add_trace(go.Bar(x=roc_series.index, y=roc_series.values, name='ROC', marker_color=['green' if v >= 0 else 'red' for v in roc_series.values]))
         fig_roc.add_trace(go.Scatter(x=overlay_price_data['close'].index, y=overlay_price_data['close'].values, name=overlay_asset, yaxis='y2', line=dict(color=theme_colors['overlay'], width=1.5, dash='dot')))
         fig_roc.update_layout(height=200)
-        column.plotly_chart(fig_roc, use_container_width=True)
+        column.plotly_chart(fig_roc, use_container_width=True, key=f"{title_prefix}_roc_chart")
         
     if 'Indicador de Clímax de Agressão' in selected_charts:
         column.markdown(f"<p style='font-size:12px; color:grey;'><b>{overlay_asset}:</b> {summaries['Indicador de Clímax de Agressão']}</p>", unsafe_allow_html=True)
@@ -297,7 +288,7 @@ def display_charts(column, metrics, title_prefix, theme_colors, overlay_price_da
         fig_climax.add_trace(go.Scatter(x=overlay_price_data['close'].index, y=overlay_price_data['close'].values, name=overlay_asset, yaxis='y2', line=dict(color=theme_colors['overlay'], width=1.5, dash='dot')))
         fig_climax.add_hline(y=3, line_dash="dot", line_color="white", annotation_text="Limiar de Clímax (+3σ)")
         fig_climax.update_layout(barmode='relative')
-        column.plotly_chart(fig_climax, use_container_width=True)
+        column.plotly_chart(fig_climax, use_container_width=True, key=f"{title_prefix}_climax_agg_chart")
 
     if 'Indicador de Clímax de Rejeição' in selected_charts:
         column.markdown(f"<p style='font-size:12px; color:grey;'><b>{overlay_asset}:</b> {summaries['Indicador de Clímax de Rejeição']}</p>", unsafe_allow_html=True)
@@ -308,7 +299,7 @@ def display_charts(column, metrics, title_prefix, theme_colors, overlay_price_da
         fig_rej.add_trace(go.Bar(x=seller_series.index, y=seller_series.values, name='Rejeição Vendedora', marker_color='pink'))
         fig_rej.add_trace(go.Scatter(x=overlay_price_data['close'].index, y=overlay_price_data['close'].values, name=overlay_asset, yaxis='y2', line=dict(color=theme_colors['overlay'], width=1.5, dash='dot')))
         fig_rej.update_layout(barmode='relative')
-        column.plotly_chart(fig_rej, use_container_width=True)
+        column.plotly_chart(fig_rej, use_container_width=True, key=f"{title_prefix}_climax_rej_chart")
 
     if 'Índice de Momentum Agregado' in selected_charts:
         column.markdown(f"<p style='font-size:12px; color:grey;'><b>{overlay_asset}:</b> {summaries['Índice de Momentum Agregado']}</p>", unsafe_allow_html=True)
@@ -317,26 +308,26 @@ def display_charts(column, metrics, title_prefix, theme_colors, overlay_price_da
         fig_mom.add_trace(go.Scatter(x=series.index, y=series.values, name='Momentum', line=dict(color=theme_colors['momentum']), fill='tozeroy'))
         fig_mom.add_trace(go.Scatter(x=overlay_price_data['close'].index, y=overlay_price_data['close'].values, name=overlay_asset, yaxis='y2', line=dict(color=theme_colors['overlay'], width=1.5, dash='dot')))
         fig_mom.add_hline(y=0, line_dash="dash", line_color="grey")
-        column.plotly_chart(fig_mom, use_container_width=True)
+        column.plotly_chart(fig_mom, use_container_width=True, key=f"{title_prefix}_momentum_chart")
     
     if 'Z-Score da Convicção' in selected_charts:
         column.markdown(f"<p style='font-size:12px; color:grey;'><b>{overlay_asset}:</b> {summaries['Z-Score da Convicção']}</p>", unsafe_allow_html=True)
-        for p, series in metrics['conviction_zscore'].items():
+        for i, (p, series) in enumerate(metrics['conviction_zscore'].items()):
             fig = create_fig_with_overlay(f'Z-Score da Convicção (EMA {p})')
             fig.add_trace(go.Scatter(x=series.tail(NUM_CANDLES_DISPLAY).index, y=series.tail(NUM_CANDLES_DISPLAY).values, name='Convicção', line=dict(color=theme_colors['conviction_z'])))
             fig.add_trace(go.Scatter(x=overlay_price_data['close'].index, y=overlay_price_data['close'].values, name=overlay_asset, yaxis='y2', line=dict(color=theme_colors['overlay'], width=1.5, dash='dot')))
             fig.add_hline(y=2, line_dash="dot", line_color="white", opacity=0.5); fig.add_hline(y=-2, line_dash="dot", line_color="white", opacity=0.5)
             fig.update_layout(yaxis=dict(range=[-3.5, 3.5]))
-            column.plotly_chart(fig, use_container_width=True)
+            column.plotly_chart(fig, use_container_width=True, key=f"{title_prefix}_zc_{p}_{i}")
         
     if 'Índice de Força de Volume (VFI)' in selected_charts:
         column.markdown(f"<p style='font-size:12px; color:grey;'><b>{overlay_asset}:</b> {summaries['Índice de Força de Volume (VFI)']}</p>", unsafe_allow_html=True)
-        for p, series in metrics['volume_force_indices'].items():
+        for i, (p, series) in enumerate(metrics['volume_force_indices'].items()):
             fig = create_fig_with_overlay(f'Índice de Força de Volume (VFI EMA {p})')
             fig.add_trace(go.Scatter(x=series.tail(NUM_CANDLES_DISPLAY).index, y=series.tail(NUM_CANDLES_DISPLAY).values, name='VFI', mode="lines", line_color=theme_colors['vfi'], fill='tozeroy'))
             fig.add_trace(go.Scatter(x=overlay_price_data['close'].index, y=overlay_price_data['close'].values, name=overlay_asset, yaxis='y2', line=dict(color=theme_colors['overlay'], width=1.5, dash='dot')))
             fig.add_hline(y=0, line_dash="dash", line_color="grey")
-            column.plotly_chart(fig, use_container_width=True)
+            column.plotly_chart(fig, use_container_width=True, key=f"{title_prefix}_vfi_{p}_{i}")
 
 # ===========================
 # Lógica Principal da Aplicação
