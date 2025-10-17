@@ -208,26 +208,37 @@ def display_charts(column, metrics, title_prefix, theme_colors, overlay_price_da
     if 'Indicador de Divergência de Agressão' in selected_charts:
         column.markdown(f"<p style='font-size:12px; color:grey;'><b>{overlay_asset}:</b> {summaries['Indicador de Divergência de Agressão']}</p>", unsafe_allow_html=True)
         
-        # Condições de Agressão e de Clímax
-        agg_is_buyer = metrics['aggression_buyer'] > metrics['aggression_seller']
-        buyer_climax_condition = metrics['buyer_climax_zscore'] > 1
-        seller_climax_condition = metrics['seller_climax_zscore'] > 1
-        asset_is_up = overlay_price_data['close'] > overlay_price_data['open']
+        p_short = MA_PERIODS[0] if MA_PERIODS else None
         
-        # Divergência de Topo: Agressão compradora com clímax > 1, mas o ativo fecha em baixa
-        topo_divergence = agg_is_buyer & ~asset_is_up & buyer_climax_condition
-        topo_points = overlay_price_data[topo_divergence]
-        
-        # Divergência de Fundo: Agressão vendedora com clímax > 1, mas o ativo fecha em alta
-        fundo_divergence = ~agg_is_buyer & asset_is_up & seller_climax_condition
-        fundo_points = overlay_price_data[fundo_divergence]
+        # Se não houver MAs, não podemos calcular o contexto, então não mostramos a divergência
+        if p_short and not overlay_price_data.empty:
+            # Condições de Agressão e de Clímax
+            agg_is_buyer = metrics['aggression_buyer'] > metrics['aggression_seller']
+            buyer_climax_condition = metrics['buyer_climax_zscore'] > 1
+            seller_climax_condition = metrics['seller_climax_zscore'] > 1
+            asset_is_up = overlay_price_data['close'] > overlay_price_data['open']
+            
+            # Condições de Contexto (NOVO)
+            strong_context = (metrics['weighted_counts'][p_short] > 50) & (metrics['qualified_counts'][p_short] > 50)
+            weak_context = (metrics['weighted_counts'][p_short] < 50) & (metrics['qualified_counts'][p_short] < 50)
 
-        fig_div = go.Figure()
-        fig_div.add_trace(go.Candlestick(x=overlay_price_data.index, open=overlay_price_data['open'], high=overlay_price_data['high'], low=overlay_price_data['low'], close=overlay_price_data['close'], name=overlay_asset))
-        fig_div.add_trace(go.Scatter(x=topo_points.index, y=topo_points['high'], mode='markers', marker=dict(symbol='triangle-down', color='red', size=10), name='Div. de Topo'))
-        fig_div.add_trace(go.Scatter(x=fundo_points.index, y=fundo_points['low'], mode='markers', marker=dict(symbol='triangle-up', color='lime', size=10), name='Div. de Fundo'))
-        fig_div.update_layout(title='Indicador de Divergência de Agressão', height=300, margin=dict(t=30, b=10, l=10, r=10), template="plotly_dark", xaxis_rangeslider_visible=False)
-        column.plotly_chart(fig_div, use_container_width=True)
+            # Divergência de Topo: Agressão compradora com clímax > 1, mas o ativo fecha em baixa E contexto de força
+            topo_divergence = agg_is_buyer & ~asset_is_up & buyer_climax_condition & strong_context
+            topo_points = overlay_price_data[topo_divergence]
+            
+            # Divergência de Fundo: Agressão vendedora com clímax > 1, mas o ativo fecha em alta E contexto de fraqueza
+            fundo_divergence = ~agg_is_buyer & asset_is_up & seller_climax_condition & weak_context
+            fundo_points = overlay_price_data[fundo_divergence]
+
+            fig_div = go.Figure()
+            fig_div.add_trace(go.Candlestick(x=overlay_price_data.index, open=overlay_price_data['open'], high=overlay_price_data['high'], low=overlay_price_data['low'], close=overlay_price_data['close'], name=overlay_asset))
+            fig_div.add_trace(go.Scatter(x=topo_points.index, y=topo_points['high'], mode='markers', marker=dict(symbol='triangle-down', color='red', size=10), name='Div. de Topo'))
+            fig_div.add_trace(go.Scatter(x=fundo_points.index, y=fundo_points['low'], mode='markers', marker=dict(symbol='triangle-up', color='lime', size=10), name='Div. de Fundo'))
+            fig_div.update_layout(title='Indicador de Divergência de Agressão', height=300, margin=dict(t=30, b=10, l=10, r=10), template="plotly_dark", xaxis_rangeslider_visible=False)
+            column.plotly_chart(fig_div, use_container_width=True)
+        else:
+            column.warning("Insira pelo menos um período de MA para o Indicador de Divergência.")
+
 
     if 'Força Ponderada (Contagem)' in selected_charts:
         column.markdown(f"<p style='font-size:12px; color:grey;'><b>{overlay_asset}:</b> {summaries['Força Ponderada (Contagem)']}</p>", unsafe_allow_html=True)
