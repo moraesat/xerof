@@ -43,7 +43,7 @@ SHADOW_TO_BODY_RATIO = 2.0
 MOMENTUM_PERIOD = 21
 MOMENTUM_Z_WINDOW = 100
 VOLUME_MA_PERIOD = 20
-CORRELATION_WINDOW = 10
+#CORRELATION_WINDOW = 10
 
 ALL_CHARTS_LIST = [
     'Indicador de Divergência de Agressão',
@@ -64,6 +64,18 @@ if st.sidebar.button("Atualizar Agora 🔄"):
 MA_INPUT = st.sidebar.text_input("Períodos das Médias Móveis", "9,21")
 MA_PERIODS = [int(x.strip()) for x in MA_INPUT.split(",") if x.strip().isdigit()]
 SELECTED_CHARTS = st.sidebar.multiselect("Gráficos a Exibir", ALL_CHARTS_LIST, default=ALL_CHARTS_LIST)
+
+# --- NOVA LINHA ---
+# Mova a definição de CORRELATION_WINDOW daqui...
+st.sidebar.title("Configurações Avançadas")
+CORRELATION_WINDOW = st.sidebar.number_input(
+    "Janela da Correlação Dinâmica", 
+    min_value=20, 
+    max_value=300, 
+    value=100, # O valor padrão original
+    step=10
+)
+# --- FIM DA NOVA LINHA ---
 
 # ===========================
 # Funções de Cálculo e Busca
@@ -377,6 +389,7 @@ with tab_corr:
 
 
 st.caption("Feito com Streamlit • Dados via FinancialModelingPrep")
+
 
 
 
