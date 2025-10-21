@@ -49,6 +49,7 @@ ALL_CHARTS_LIST = [
     'Indicador de Divergência de Agressão',
     'Força Ponderada (Contagem)',
     'Força Qualificada (Filtro)', 'Z-Score da Força Qualificada',
+    'Velocidade e Aceleração',
     'Indicador de Clímax de Agressão', 'Indicador de Clímax de Rejeição',
     'Índice de Momentum Agregado', 'Índice de Força de Volume (VFI)'
 ]
@@ -158,8 +159,11 @@ def calculate_breadth_metrics(asset_weights: dict, combined_data: pd.DataFrame, 
     metrics['seller_climax_zscore'] = calculate_zscore(aggression_seller, CLIMAX_Z_WINDOW)
     metrics['aggregate_momentum_index'] = pd.concat(momentum_components, axis=1).sum(axis=1) if momentum_components else pd.Series(0.0, index=combined_data.index)
     
+    metrics['rocs'], metrics['accelerations'] = {}, {}
     metrics['qualified_zscore'] = {} 
     for p in MA_PERIODS:
+        metrics['rocs'][p] = metrics['weighted_counts'][p].diff()
+        metrics['accelerations'][p] = metrics['rocs'][p].diff()
         metrics['qualified_zscore'][p] = calculate_zscore(metrics['qualified_counts'][p], Z_SCORE_WINDOW) 
 
     return metrics
@@ -222,6 +226,15 @@ def display_charts(container, metrics, title_prefix, theme_colors, overlay_price
             fig.update_layout(yaxis=dict(range=[-3.5, 3.5]))
             container.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_zqc_{p}")
 
+    if 'Velocidade e Aceleração' in selected_charts and MA_PERIODS:
+        p_short = MA_PERIODS[0]
+        roc_series = metrics['rocs'][p_short].tail(NUM_CANDLES_DISPLAY)
+        fig_roc = create_fig_with_overlay(f'Velocidade (ROC EMA {p_short})')
+        fig_roc.add_trace(go.Bar(x=roc_series.index, y=roc_series.values, name='ROC', marker_color=['green' if v >= 0 else 'red' for v in roc_series.values]))
+        fig_roc.add_trace(go.Scatter(x=overlay_price_data['close'].index, y=overlay_price_data['close'].values, name='XAUUSD', yaxis='y2', line=dict(color=theme_colors['overlay'], width=1.5, dash='dot')))
+        fig_roc.update_layout(height=200)
+        container.plotly_chart(fig_roc, use_container_width=True, key=f"{key_prefix}_roc")
+
     if 'Indicador de Clímax de Agressão' in selected_charts:
         buyer_series = metrics['buyer_climax_zscore'].tail(NUM_CANDLES_DISPLAY).clip(lower=0)
         seller_series = metrics['seller_climax_zscore'].tail(NUM_CANDLES_DISPLAY).clip(lower=0)
@@ -265,16 +278,17 @@ def display_charts(container, metrics, title_prefix, theme_colors, overlay_price
 st.title("🥇 Painel de Análise Avançada XAUUSD")
 
 placeholder = st.empty()
+corr_summary_placeholder = st.empty()
 xauusd_basket = list(set(ALL_UNIQUE_ASSETS) - {'XAUUSD', 'XAGUSD'})
 
-# --- LÓGICA DE EXECUÇÃO PARALELA PARA 1MIN E 5MIN ---
 def process_timeframe(timeframe):
     candles_to_fetch = (max(MA_PERIODS) if MA_PERIODS else 200) + NUM_CANDLES_DISPLAY + max(Z_SCORE_WINDOW, MOMENTUM_Z_WINDOW, CLIMAX_Z_WINDOW, CORRELATION_WINDOW)
     combined_data = build_combined_data(ALL_UNIQUE_ASSETS, timeframe, candles_to_fetch)
     if combined_data.empty or 'XAUUSD_close' not in combined_data.columns:
-        return timeframe, None, None
+        return timeframe, None, None, None
     
     dynamic_weights = {}
+    latest_correlations = {}
     if len(combined_data) > CORRELATION_WINDOW:
         ref_returns = combined_data['XAUUSD_close'].pct_change()
         for s in xauusd_basket:
@@ -282,23 +296,25 @@ def process_timeframe(timeframe):
             if asset_returns is not None:
                 correlation = ref_returns.rolling(window=CORRELATION_WINDOW).corr(asset_returns)
                 dynamic_weights[s] = correlation.fillna(0)
+                if not correlation.empty:
+                    latest_correlations[s] = correlation.iloc[-1]
 
     if not dynamic_weights:
-        return timeframe, None, None
+        return timeframe, None, None, None
 
     metrics = calculate_breadth_metrics(dynamic_weights, combined_data, is_dynamic_weights=True)
     overlay_data = combined_data[[f"XAUUSD_open", f"XAUUSD_high", f"XAUUSD_low", f"XAUUSD_close"]].tail(NUM_CANDLES_DISPLAY)
     overlay_data.columns = ['open', 'high', 'low', 'close']
-    return timeframe, metrics, overlay_data
+    return timeframe, metrics, overlay_data, latest_correlations
 
 results = {}
 with st.spinner("A processar dados multi-timeframe..."):
     with ThreadPoolExecutor() as executor:
         futures = [executor.submit(process_timeframe, tf) for tf in ['1min', '5min']]
         for future in as_completed(futures):
-            tf, metrics, overlay_data = future.result()
+            tf, metrics, overlay_data, correlations = future.result()
             if metrics:
-                results[tf] = {'metrics': metrics, 'overlay': overlay_data}
+                results[tf] = {'metrics': metrics, 'overlay': overlay_data, 'correlations': correlations}
 
 # Atualiza status de dados
 if '1min' in results:
@@ -309,6 +325,14 @@ if '1min' in results:
         placeholder.success(f"🟢 Dados FRESCOS (Atraso de {delay_minutes:.1f} min)")
     else:
         placeholder.warning(f"🟠 ATENÇÃO: Atraso nos dados de {delay_minutes:.1f} min")
+
+    correlations = results['1min']['correlations']
+    if correlations:
+        avg_corr = np.mean(list(correlations.values()))
+        max_corr_asset = max(correlations, key=correlations.get)
+        min_corr_asset = min(correlations, key=correlations.get)
+        corr_summary_placeholder.markdown(f"<p style='font-size:12px; color:grey;'>Correlação Média: <b>{avg_corr:.2f}</b> | Maior: <b>{max_corr_asset} ({correlations[max_corr_asset]:.2f})</b> | Menor: <b>{min_corr_asset} ({correlations[min_corr_asset]:.2f})</b></p>", unsafe_allow_html=True)
+
 else:
     st.error("Não foi possível carregar os dados. Verifique a API.")
     st.stop()
