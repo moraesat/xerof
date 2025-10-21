@@ -70,10 +70,10 @@ SELECTED_CHARTS = st.sidebar.multiselect("Gráficos a Exibir", ALL_CHARTS_LIST, 
 st.sidebar.title("Configurações Avançadas")
 CORRELATION_WINDOW = st.sidebar.number_input(
     "Janela da Correlação Dinâmica", 
-    min_value=20, 
+    min_value=1, 
     max_value=300, 
     value=100, # O valor padrão original
-    step=10
+    step=1
 )
 # --- FIM DA NOVA LINHA ---
 
@@ -389,6 +389,7 @@ with tab_corr:
 
 
 st.caption("Feito com Streamlit • Dados via FinancialModelingPrep")
+
 
 
 
