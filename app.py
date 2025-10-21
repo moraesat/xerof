@@ -124,15 +124,15 @@ def calculate_breadth_metrics(asset_weights: dict, combined_data: pd.DataFrame, 
     momentum_components = []
 
     for s, weight in asset_weights.items():
-        close_col, open_col, high_col, low_col, vol_col = f"{s}_close", f"{s}_open", f"{s}_high", f"{s}_low", f"{s}_volume"
+        close_col, open_col = f"{s}_close", f"{s}_open"
         if close_col not in combined_data.columns: continue
 
         if isinstance(weight, pd.Series):
             weight = weight.reindex(combined_data.index, method='ffill').fillna(0)
 
         atr = calculate_atr(combined_data[f"{s}_high"], combined_data[f"{s}_low"], combined_data[close_col], ATR_PERIOD).replace(0, np.nan)
-        volume_ma = combined_data[vol_col].rolling(window=VOLUME_MA_PERIOD).mean().replace(0, np.nan)
-        volume_strength = (combined_data[vol_col] / volume_ma).fillna(1)
+        volume_ma = combined_data[f"{s}_volume"].rolling(window=VOLUME_MA_PERIOD).mean().replace(0, np.nan)
+        volume_strength = (combined_data[f"{s}_volume"] / volume_ma).fillna(1)
 
         for p in MA_PERIODS:
             ema_val = combined_data[close_col].ewm(span=p, adjust=False).mean()
@@ -161,6 +161,7 @@ def calculate_breadth_metrics(asset_weights: dict, combined_data: pd.DataFrame, 
     
     xau_upper_shadow = xau_high - combined_data[['XAUUSD_open', 'XAUUSD_close']].max(axis=1)
     xau_lower_shadow = combined_data[['XAUUSD_open', 'XAUUSD_close']].min(axis=1) - xau_low
+    
     metrics['xau_rejection_buyer'] = (xau_lower_shadow / xau_body).where(xau_lower_shadow > xau_body * SHADOW_TO_BODY_RATIO, 0)
     metrics['xau_rejection_seller'] = (xau_upper_shadow / xau_body).where(xau_upper_shadow > xau_body * SHADOW_TO_BODY_RATIO, 0)
 
@@ -168,6 +169,7 @@ def calculate_breadth_metrics(asset_weights: dict, combined_data: pd.DataFrame, 
     metrics['xau_roc'] = {}
     metrics['xau_accel'] = {}
     for p in MA_PERIODS:
+        xau_close = combined_data['XAUUSD_close']
         metrics['xau_roc'][p] = xau_close.diff()
         metrics['xau_accel'][p] = xau_close.diff().diff()
 
@@ -250,6 +252,12 @@ def display_charts(column, metrics, title_prefix, theme_colors, overlay_price_da
         fig_roc.add_trace(go.Scatter(x=overlay_price_data['close'].index, y=overlay_price_data['close'].values, name='XAUUSD', yaxis='y2', line=dict(color=theme_colors['overlay'], width=1.5, dash='dot')))
         fig_roc.update_layout(height=200)
         column.plotly_chart(fig_roc, use_container_width=True, key=f"{key_prefix}_roc")
+
+        fig_accel = create_fig_with_overlay(f'Aceleração (XAUUSD {p_short})')
+        fig_accel.add_trace(go.Bar(x=xau_accel.index, y=xau_accel.values, name='Aceleração', marker_color=['#1f77b4' if v >= 0 else '#ff7f0e' for v in xau_accel.values]))
+        fig_accel.add_trace(go.Scatter(x=overlay_price_data['close'].index, y=overlay_price_data['close'].values, name='XAUUSD', yaxis='y2', line=dict(color=theme_colors['overlay'], width=1.5, dash='dot')))
+        fig_accel.update_layout(height=200)
+        column.plotly_chart(fig_accel, use_container_width=True, key=f"{key_prefix}_accel")
 
     if 'Indicador de Clímax de Agressão' in selected_charts:
         buyer_series = metrics['xau_buyer_climax_zscore'].tail(NUM_CANDLES_DISPLAY).clip(lower=0)
