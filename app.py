@@ -43,7 +43,7 @@ SHADOW_TO_BODY_RATIO = 2.0
 MOMENTUM_PERIOD = 21
 MOMENTUM_Z_WINDOW = 100
 VOLUME_MA_PERIOD = 20
-CORRELATION_WINDOW = 30
+CORRELATION_WINDOW = 100
 
 ALL_CHARTS_LIST = [
     'Indicador de Divergência de Agressão',
@@ -377,4 +377,5 @@ with tab_corr:
 
 
 st.caption("Feito com Streamlit • Dados via FinancialModelingPrep")
+
 
