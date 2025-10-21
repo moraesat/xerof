@@ -281,7 +281,6 @@ placeholder = st.empty()
 corr_summary_placeholder = st.empty()
 xauusd_basket = list(set(ALL_UNIQUE_ASSETS) - {'XAUUSD', 'XAGUSD'})
 
-# --- LÓGICA DE EXECUÇÃO PARALELA PARA 1MIN E 5MIN ---
 def process_timeframe(timeframe):
     candles_to_fetch = (max(MA_PERIODS) if MA_PERIODS else 200) + NUM_CANDLES_DISPLAY + max(Z_SCORE_WINDOW, MOMENTUM_Z_WINDOW, CLIMAX_Z_WINDOW, CORRELATION_WINDOW)
     combined_data = build_combined_data(ALL_UNIQUE_ASSETS, timeframe, candles_to_fetch)
@@ -317,7 +316,6 @@ with st.spinner("A processar dados multi-timeframe..."):
             if metrics:
                 results[tf] = {'metrics': metrics, 'overlay': overlay_data, 'correlations': correlations}
 
-# Atualiza status de dados
 if '1min' in results:
     now = datetime.now(TZ)
     last_candle_time = results['1min']['overlay'].index[-1]
@@ -329,8 +327,7 @@ if '1min' in results:
 
     correlations = results['1min']['correlations']
     if correlations:
-        # Pega o último valor de correlação de cada série
-        latest_corr_values = {asset: corr_series.iloc[-1] for asset, corr_series in correlations.items() if not corr_series.empty}
+        latest_corr_values = {asset: value for asset, value in correlations.items() if pd.notna(value)}
         if latest_corr_values:
             avg_corr = np.mean(list(latest_corr_values.values()))
             max_corr_asset = max(latest_corr_values, key=latest_corr_values.get)
