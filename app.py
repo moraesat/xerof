@@ -122,9 +122,34 @@ def calculate_breadth_metrics(asset_weights: dict, combined_data: pd.DataFrame, 
     metrics['qualified_counts'] = {p: pd.Series(0.0, index=combined_data.index) for p in MA_PERIODS}
     metrics['volume_force_indices'] = {p: pd.Series(0.0, index=combined_data.index) for p in MA_PERIODS}
     momentum_components = []
+
+    for s, weight in asset_weights.items():
+        close_col, open_col, high_col, low_col, vol_col = f"{s}_close", f"{s}_open", f"{s}_high", f"{s}_low", f"{s}_volume"
+        if close_col not in combined_data.columns: continue
+
+        if isinstance(weight, pd.Series):
+            weight = weight.reindex(combined_data.index, method='ffill').fillna(0)
+
+        atr = calculate_atr(combined_data[f"{s}_high"], combined_data[f"{s}_low"], combined_data[close_col], ATR_PERIOD).replace(0, np.nan)
+        volume_ma = combined_data[vol_col].rolling(window=VOLUME_MA_PERIOD).mean().replace(0, np.nan)
+        volume_strength = (combined_data[vol_col] / volume_ma).fillna(1)
+
+        for p in MA_PERIODS:
+            ema_val = combined_data[close_col].ewm(span=p, adjust=False).mean()
+            above_ema = (combined_data[close_col] > ema_val)
+            metrics['weighted_counts'][p] += above_ema.astype(int) * weight
+            normalized_distance = ((combined_data[close_col] - ema_val) / atr).fillna(0)
+            metrics['qualified_counts'][p] += (normalized_distance > CONVICTION_THRESHOLD).astype(int) * weight
+            metrics['volume_force_indices'][p] += (normalized_distance * volume_strength) * weight
+        
+        roc = combined_data[close_col].pct_change(periods=MOMENTUM_PERIOD)
+        normalized_momentum = calculate_zscore(roc, MOMENTUM_Z_WINDOW)
+        momentum_components.append(normalized_momentum * weight)
+
+    metrics['aggregate_momentum_index'] = pd.concat(momentum_components, axis=1).sum(axis=1) if momentum_components else pd.Series(0.0, index=combined_data.index)
     
-    # 1. Pré-Cálculos XAUUSD (Eventos - Usados nos gatilhos)
-    xau_close, xau_open, xau_high, xau_low, xau_vol = combined_data['XAUUSD_close'], combined_data['XAUUSD_open'], combined_data['XAUUSD_high'], combined_data['XAUUSD_low'], combined_data['XAUUSD_volume']
+    # 2. Pré-Cálculos XAUUSD (Eventos - Usados nos gatilhos)
+    xau_close, xau_open, xau_high, xau_low = combined_data['XAUUSD_close'], combined_data['XAUUSD_open'], combined_data['XAUUSD_high'], combined_data['XAUUSD_low']
     xau_atr = calculate_atr(xau_high, xau_low, xau_close, ATR_PERIOD).replace(0, np.nan)
     xau_energy = (xau_high - xau_low) / xau_atr
     xau_body = abs(xau_close - xau_open).replace(0, 0.00001)
@@ -139,47 +164,24 @@ def calculate_breadth_metrics(asset_weights: dict, combined_data: pd.DataFrame, 
     metrics['xau_rejection_buyer'] = (xau_lower_shadow / xau_body).where(xau_lower_shadow > xau_body * SHADOW_TO_BODY_RATIO, 0)
     metrics['xau_rejection_seller'] = (xau_upper_shadow / xau_body).where(xau_upper_shadow > xau_body * SHADOW_TO_BODY_RATIO, 0)
 
-    # --- 2. Cálculo das Métricas de Amplitude (Score de Correlação) ---
-    for s, weight in asset_weights.items():
-        close_col, open_col = f"{s}_close", f"{s}_open"
-        if close_col not in combined_data.columns: continue
+    # --- Adicionar ROC/Accel do XAUUSD-ONLY ---
+    metrics['xau_roc'] = {}
+    metrics['xau_accel'] = {}
+    for p in MA_PERIODS:
+        metrics['xau_roc'][p] = xau_close.diff()
+        metrics['xau_accel'][p] = xau_close.diff().diff()
 
-        if isinstance(weight, pd.Series):
-            weight = weight.reindex(combined_data.index, method='ffill').fillna(0)
-
-        atr = calculate_atr(combined_data[f"{s}_high"], combined_data[f"{s}_low"], combined_data[close_col], ATR_PERIOD).replace(0, np.nan)
-        volume_ma = combined_data[f"{s}_volume"].rolling(window=VOLUME_MA_PERIOD).mean().replace(0, np.nan)
-        volume_strength = (combined_data[f"{s}_volume"] / volume_ma).fillna(1)
-
-        for p in MA_PERIODS:
-            ema_val = combined_data[close_col].ewm(span=p, adjust=False).mean()
-            above_ema = (combined_data[close_col] > ema_val)
-            
-            # Ponderação pela Correlação
-            metrics['weighted_counts'][p] += above_ema.astype(int) * weight
-            
-            normalized_distance = ((combined_data[close_col] - ema_val) / atr).fillna(0)
-            metrics['qualified_counts'][p] += (normalized_distance > CONVICTION_THRESHOLD).astype(int) * weight
-            metrics['volume_force_indices'][p] += (normalized_distance * volume_strength) * weight
-        
-        # Momentum
-        roc = combined_data[close_col].pct_change(periods=MOMENTUM_PERIOD)
-        normalized_momentum = calculate_zscore(roc, MOMENTUM_Z_WINDOW)
-        momentum_components.append(normalized_momentum * weight)
-
-    metrics['aggregate_momentum_index'] = pd.concat(momentum_components, axis=1).sum(axis=1) if momentum_components else pd.Series(0.0, index=combined_data.index)
-    
+    # --- Cálculos Finais ---
     metrics['rocs'], metrics['accelerations'] = {}, {}
     metrics['qualified_zscore'] = {} 
     for p in MA_PERIODS:
-        series_wc = metrics['weighted_counts'][p]
         metrics['rocs'][p] = metrics['weighted_counts'][p].diff()
         metrics['accelerations'][p] = metrics['rocs'][p].diff()
         metrics['qualified_zscore'][p] = calculate_zscore(metrics['qualified_counts'][p], Z_SCORE_WINDOW) 
 
     return metrics
 
-def display_charts(container, metrics, title_prefix, theme_colors, overlay_price_data, selected_charts, key_prefix, is_dynamic_weights=False):
+def display_charts(column, metrics, title_prefix, theme_colors, overlay_price_data, selected_charts, key_prefix, is_dynamic_weights=False):
     
     def create_fig_with_overlay(title):
         fig = go.Figure()
@@ -349,10 +351,12 @@ def process_timeframe(timeframe):
     metrics['xau_rejection_seller'] = (xau_upper_shadow / xau_body).where(xau_upper_shadow > xau_body * SHADOW_TO_BODY_RATIO, 0)
 
     # --- Adicionar ROC/Accel do XAUUSD-ONLY ---
+    metrics['xau_roc'] = {}
+    metrics['xau_accel'] = {}
     for p in MA_PERIODS:
         xau_close = combined_data['XAUUSD_close']
-        metrics['xau_roc'] = {p: xau_close.diff()}
-        metrics['xau_accel'] = {p: xau_close.diff().diff()}
+        metrics['xau_roc'][p] = xau_close.diff()
+        metrics['xau_accel'][p] = xau_close.diff().diff()
     
     return timeframe, metrics, overlay_data, latest_correlations
 
