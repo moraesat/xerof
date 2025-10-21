@@ -329,10 +329,13 @@ if '1min' in results:
 
     correlations = results['1min']['correlations']
     if correlations:
-        avg_corr = np.mean(list(correlations.values()))
-        max_corr_asset = max(correlations, key=correlations.get)
-        min_corr_asset = min(correlations, key=correlations.get)
-        corr_summary_placeholder.markdown(f"<p style='font-size:12px; color:grey;'>Correlação Média: <b>{avg_corr:.2f}</b> | Maior: <b>{max_corr_asset} ({correlations[max_corr_asset]:.2f})</b> | Menor: <b>{min_corr_asset} ({correlations[min_corr_asset]:.2f})</b></p>", unsafe_allow_html=True)
+        # Pega o último valor de correlação de cada série
+        latest_corr_values = {asset: corr_series.iloc[-1] for asset, corr_series in correlations.items() if not corr_series.empty}
+        if latest_corr_values:
+            avg_corr = np.mean(list(latest_corr_values.values()))
+            max_corr_asset = max(latest_corr_values, key=latest_corr_values.get)
+            min_corr_asset = min(latest_corr_values, key=latest_corr_values.get)
+            corr_summary_placeholder.markdown(f"<p style='font-size:12px; color:grey;'>Correlação Média: <b>{avg_corr:.2f}</b> | Maior: <b>{max_corr_asset} ({latest_corr_values[max_corr_asset]:.2f})</b> | Menor: <b>{min_corr_asset} ({latest_corr_values[min_corr_asset]:.2f})</b></p>", unsafe_allow_html=True)
 
 else:
     st.error("Não foi possível carregar os dados. Verifique a API.")
