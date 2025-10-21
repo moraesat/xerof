@@ -109,6 +109,30 @@ def calculate_atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int
 def calculate_zscore(series: pd.Series, window: int) -> pd.Series:
     return (series - series.rolling(window=window).mean()) / series.rolling(window=window).std()
 
+def calculate_aligned_correlation_weights(risk_on_basket, risk_off_basket, reference_asset_symbol, combined_data, window):
+    weights = {}
+    latest_correlations = {}
+    ref_returns = combined_data[f"{reference_asset_symbol}_close"].pct_change()
+    
+    # Cesta Risk-On (espera-se correlação positiva)
+    for asset in risk_on_basket:
+        asset_returns = combined_data.get(f"{asset}_close", pd.Series(dtype=float)).pct_change()
+        if not asset_returns.empty:
+            correlation = ref_returns.rolling(window=window).corr(asset_returns)
+            weights[asset] = correlation.fillna(0) # Peso alinhado é a própria correlação
+            if not correlation.empty: latest_correlations[asset] = correlation.iloc[-1]
+
+    # Cesta Risk-Off (espera-se correlação negativa)
+    for asset in risk_off_basket:
+        asset_returns = combined_data.get(f"{asset}_close", pd.Series(dtype=float)).pct_change()
+        if not asset_returns.empty:
+            correlation = ref_returns.rolling(window=window).corr(asset_returns)
+            weights[asset] = correlation.fillna(0) * -1 # Peso alinhado é a correlação INVERTIDA
+            if not correlation.empty: latest_correlations[asset] = correlation.iloc[-1]
+            
+    return weights, latest_correlations
+
+
 def calculate_breadth_metrics(asset_weights: dict, combined_data: pd.DataFrame, is_dynamic_weights=False):
     metrics = {}
     metrics['weighted_counts'] = {p: pd.Series(0.0, index=combined_data.index) for p in MA_PERIODS}
@@ -287,17 +311,17 @@ def process_timeframe(timeframe):
     if combined_data.empty or 'XAUUSD_close' not in combined_data.columns:
         return timeframe, None, None, None
     
-    dynamic_weights = {}
-    latest_correlations = {}
-    if len(combined_data) > CORRELATION_WINDOW:
-        ref_returns = combined_data['XAUUSD_close'].pct_change()
-        for s in xauusd_basket:
-            asset_returns = combined_data.get(f"{s}_close").pct_change()
-            if asset_returns is not None:
-                correlation = ref_returns.rolling(window=CORRELATION_WINDOW).corr(asset_returns)
-                dynamic_weights[s] = correlation.fillna(0)
-                if not correlation.empty:
-                    latest_correlations[s] = correlation.iloc[-1]
+    # Cesta para a aba XAUUSD (Risk-On e Risk-Off combinados)
+    xauusd_analysis_basket = list(set(RISK_ON_ASSETS.keys()) | set(RISK_OFF_ASSETS.keys()) - {'XAUUSD', 'XAGUSD'})
+    
+    # Pesos de correlação alinhados
+    dynamic_weights, latest_correlations = calculate_aligned_correlation_weights(
+        risk_on_basket=list(set(RISK_ON_ASSETS.keys()) - {'XAUUSD', 'XAGUSD'}),
+        risk_off_basket=list(RISK_OFF_ASSETS.keys()),
+        reference_asset_symbol='XAUUSD',
+        combined_data=combined_data,
+        window=CORRELATION_WINDOW
+    )
 
     if not dynamic_weights:
         return timeframe, None, None, None
@@ -353,24 +377,27 @@ with tab5:
 
 with tab_corr:
     st.header("Matriz de Correlação vs. XAUUSD (Baseado no Timeframe de 1 Minuto)")
-    st.markdown("Mostra a correlação móvel mais recente de cada ativo com o XAUUSD, usada para a ponderação dinâmica.")
+    st.markdown("Mostra a correlação móvel mais recente de cada ativo com o XAUUSD.")
     if '1min' in results and results['1min']['correlations']:
         correlations = results['1min']['correlations']
         latest_corr_values = {asset: value for asset, value in correlations.items() if pd.notna(value)}
 
-        # Separar por cesta original para visualização
-        risk_on_corr_data = {asset: corr for asset, corr in latest_corr_values.items() if asset in RISK_ON_ASSETS}
-        risk_off_corr_data = {asset: corr for asset, corr in latest_corr_values.items() if asset in RISK_OFF_ASSETS}
+        # Separa cestas para visualização
+        risk_on_basket_corr = list(set(RISK_ON_ASSETS.keys()) - {'XAUUSD', 'XAGUSD'})
+        risk_off_basket_corr = list(RISK_OFF_ASSETS.keys())
+
+        risk_on_corr_data = {asset: corr for asset, corr in latest_corr_values.items() if asset in risk_on_basket_corr}
+        risk_off_corr_data = {asset: corr for asset, corr in latest_corr_values.items() if asset in risk_off_basket_corr}
 
         df_risk_on = pd.DataFrame(list(risk_on_corr_data.items()), columns=['Ativo', 'Correlação']).sort_values(by='Correlação', ascending=False).set_index('Ativo')
         df_risk_off = pd.DataFrame(list(risk_off_corr_data.items()), columns=['Ativo', 'Correlação']).sort_values(by='Correlação', ascending=False).set_index('Ativo')
 
         col1_corr, col2_corr = st.columns(2)
         with col1_corr:
-            st.subheader("Ativos da Cesta Risk-On")
+            st.subheader("Cesta Risk-On (espera-se > 0)")
             st.dataframe(df_risk_on.style.background_gradient(cmap='RdYlGn', vmin=-1, vmax=1).format("{:.2f}"), use_container_width=True)
         with col2_corr:
-            st.subheader("Ativos da Cesta Risk-Off")
+            st.subheader("Cesta Risk-Off (espera-se < 0)")
             st.dataframe(df_risk_off.style.background_gradient(cmap='RdYlGn', vmin=-1, vmax=1).format("{:.2f}"), use_container_width=True)
     else:
         st.warning("Dados de correlação para o timeframe de 1 minuto ainda não estão disponíveis. Aguarde a próxima atualização.")
