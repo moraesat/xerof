@@ -47,6 +47,7 @@ CORRELATION_WINDOW = 100
 
 ALL_CHARTS_LIST = [
     'Indicador de Divergência de Agressão',
+    'Força Ponderada (Contagem)',
     'Força Qualificada (Filtro)', 'Z-Score da Força Qualificada',
     'Indicador de Clímax de Agressão', 'Indicador de Clímax de Rejeição',
     'Índice de Momentum Agregado', 'Índice de Força de Volume (VFI)'
@@ -109,6 +110,7 @@ def calculate_zscore(series: pd.Series, window: int) -> pd.Series:
 
 def calculate_breadth_metrics(asset_weights: dict, combined_data: pd.DataFrame, is_dynamic_weights=False):
     metrics = {}
+    metrics['weighted_counts'] = {p: pd.Series(0.0, index=combined_data.index) for p in MA_PERIODS}
     metrics['qualified_counts'] = {p: pd.Series(0.0, index=combined_data.index) for p in MA_PERIODS}
     metrics['volume_force_indices'] = {p: pd.Series(0.0, index=combined_data.index) for p in MA_PERIODS}
     aggression_buyer, aggression_seller = pd.Series(0.0, index=combined_data.index), pd.Series(0.0, index=combined_data.index)
@@ -140,6 +142,8 @@ def calculate_breadth_metrics(asset_weights: dict, combined_data: pd.DataFrame, 
 
         for p in MA_PERIODS:
             ema_val = combined_data[close_col].ewm(span=p, adjust=False).mean()
+            above_ema = (combined_data[close_col] > ema_val)
+            metrics['weighted_counts'][p] += above_ema.astype(int) * weight
             normalized_distance = ((combined_data[close_col] - ema_val) / atr).fillna(0)
             metrics['qualified_counts'][p] += (normalized_distance > CONVICTION_THRESHOLD).astype(int) * weight
             metrics['volume_force_indices'][p] += (normalized_distance * volume_strength) * weight
@@ -183,14 +187,24 @@ def display_charts(container, metrics, title_prefix, theme_colors, overlay_price
         divergence_sell = buyer_climax & ~candle_is_up
 
         fig = go.Figure()
-        fig.add_trace(go.Candlestick(x=overlay_price_data.index, open=overlay_price_data['open'], high=overlay_price_data['high'], low=overlay_price_data['low'], close=overlay_price_data['close'], name="XAUUSD", increasing_line_color= 'rgba(255,255,255,0.7)', decreasing_line_color= 'rgba(255,255,255,0.7)'))
+        fig.add_trace(go.Candlestick(x=overlay_price_data.index, open=overlay_price_data['open'], high=overlay_price_data['high'], low=overlay_price_data['low'], close=overlay_price_data['close'], name="XAUUSD",
+                                     increasing_line_color='green', decreasing_line_color='red'))
         fig.add_trace(go.Scatter(x=overlay_price_data[confirmation_buy].index, y=overlay_price_data[confirmation_buy]['low'], mode='markers', marker=dict(symbol='triangle-up', color='lime', size=10), name='Confirmação Compra'))
         fig.add_trace(go.Scatter(x=overlay_price_data[confirmation_sell].index, y=overlay_price_data[confirmation_sell]['high'], mode='markers', marker=dict(symbol='triangle-down', color='red', size=10), name='Confirmação Venda'))
         fig.add_trace(go.Scatter(x=overlay_price_data[divergence_buy].index, y=overlay_price_data[divergence_buy]['low'], mode='markers', marker=dict(symbol='diamond', color='cyan', size=10), name='Divergência Compra'))
         fig.add_trace(go.Scatter(x=overlay_price_data[divergence_sell].index, y=overlay_price_data[divergence_sell]['high'], mode='markers', marker=dict(symbol='diamond', color='magenta', size=10), name='Divergência Venda'))
-        fig.update_layout(title='Indicador de Clímax e Resultado', height=300, margin=dict(t=30, b=10, l=10, r=10), template="plotly_dark", xaxis_rangeslider_visible=False)
+        fig.update_layout(title='Indicador de Clímax e Resultado', height=350, margin=dict(t=30, b=40, l=10, r=10), template="plotly_dark", xaxis_rangeslider_visible=False,
+                          legend=dict(orientation="h", yanchor="bottom", y=-0.5, xanchor="right", x=1))
         container.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_divergence")
 
+    if 'Força Ponderada (Contagem)' in selected_charts:
+        for p, series in metrics['weighted_counts'].items():
+            fig = create_fig_with_overlay(f'Força Ponderada (Contagem EMA {p})')
+            fig.add_trace(go.Scatter(x=series.tail(NUM_CANDLES_DISPLAY).index, y=series.tail(NUM_CANDLES_DISPLAY).values, name='Força', mode="lines", fill="tozeroy", line_color=theme_colors['main'], opacity=0.7))
+            fig.add_trace(go.Scatter(x=overlay_price_data['close'].index, y=overlay_price_data['close'].values, name='XAUUSD', yaxis='y2', line=dict(color=theme_colors['overlay'], width=1.5, dash='dot')))
+            if not is_dynamic_weights: fig.update_layout(yaxis=dict(range=[0, 100]))
+            container.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_wc_{p}")
+            
     if 'Força Qualificada (Filtro)' in selected_charts:
         for p, series in metrics['qualified_counts'].items():
             fig = create_fig_with_overlay(f'Força Qualificada (Filtro EMA {p})')
