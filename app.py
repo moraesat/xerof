@@ -47,10 +47,8 @@ CORRELATION_WINDOW = 100
 
 ALL_CHARTS_LIST = [
     'Indicador de Divergência de Agressão',
-    'Força Ponderada (Contagem)',
-    'Força Qualificada (Filtro)', 'Z-Score da Força Qualificada',
-    'Velocidade e Aceleração',
-    'Indicador de Clímax de Agressão', 'Indicador de Clímax de Rejeição',
+    'Força Ponderada (Contagem)', 'Força Qualificada (Filtro)', 'Z-Score da Força Qualificada',
+    'Velocidade e Aceleração', 'Indicador de Clímax de Agressão', 'Indicador de Clímax de Rejeição',
     'Índice de Momentum Agregado', 'Índice de Força de Volume (VFI)'
 ]
 
@@ -109,90 +107,70 @@ def calculate_atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int
 def calculate_zscore(series: pd.Series, window: int) -> pd.Series:
     return (series - series.rolling(window=window).mean()) / series.rolling(window=window).std()
 
-def calculate_aligned_correlation_weights(risk_on_basket, risk_off_basket, reference_asset_symbol, combined_data, window):
-    weights = {}
-    latest_correlations = {}
-    ref_returns = combined_data[f"{reference_asset_symbol}_close"].pct_change()
-    
-    # Cesta Risk-On (espera-se correlação positiva)
-    for asset in risk_on_basket:
-        asset_returns = combined_data.get(f"{asset}_close", pd.Series(dtype=float)).pct_change()
-        if not asset_returns.empty:
-            correlation = ref_returns.rolling(window=window).corr(asset_returns)
-            weights[asset] = correlation.fillna(0) # Peso alinhado é a própria correlação
-            if not correlation.empty: latest_correlations[asset] = correlation.iloc[-1]
-
-    # Cesta Risk-Off (espera-se correlação negativa)
-    for asset in risk_off_basket:
-        asset_returns = combined_data.get(f"{asset}_close", pd.Series(dtype=float)).pct_change()
-        if not asset_returns.empty:
-            correlation = ref_returns.rolling(window=window).corr(asset_returns)
-            weights[asset] = correlation.fillna(0) * -1 # Peso alinhado é a correlação INVERTIDA
-            if not correlation.empty: latest_correlations[asset] = correlation.iloc[-1]
-            
-    return weights, latest_correlations
-
-
 def calculate_breadth_metrics(asset_weights: dict, combined_data: pd.DataFrame, is_dynamic_weights=False):
     metrics = {}
     metrics['weighted_counts'] = {p: pd.Series(0.0, index=combined_data.index) for p in MA_PERIODS}
     metrics['qualified_counts'] = {p: pd.Series(0.0, index=combined_data.index) for p in MA_PERIODS}
     metrics['volume_force_indices'] = {p: pd.Series(0.0, index=combined_data.index) for p in MA_PERIODS}
-    aggression_buyer, aggression_seller = pd.Series(0.0, index=combined_data.index), pd.Series(0.0, index=combined_data.index)
-    rejection_buyer, rejection_seller = pd.Series(0.0, index=combined_data.index), pd.Series(0.0, index=combined_data.index)
     momentum_components = []
+    
+    # 1. Pré-Cálculos XAUUSD (Eventos - Usados nos gatilhos)
+    xau_close, xau_open, xau_high, xau_low, xau_vol = combined_data['XAUUSD_close'], combined_data['XAUUSD_open'], combined_data['XAUUSD_high'], combined_data['XAUUSD_low'], combined_data['XAUUSD_volume']
+    xau_atr = calculate_atr(xau_high, xau_low, xau_close, ATR_PERIOD).replace(0, np.nan)
+    xau_energy = (xau_high - xau_low) / xau_atr
+    xau_body = abs(xau_close - xau_open).replace(0, 0.00001)
 
+    metrics['xau_aggression_buyer'] = xau_energy.where((xau_close > xau_open) & (xau_energy > ENERGY_THRESHOLD), 0)
+    metrics['xau_aggression_seller'] = xau_energy.where((xau_close < xau_open) & (xau_energy > ENERGY_THRESHOLD), 0)
+    metrics['xau_buyer_climax_zscore'] = calculate_zscore(metrics['xau_aggression_buyer'], CLIMAX_Z_WINDOW)
+    metrics['xau_seller_climax_zscore'] = calculate_zscore(metrics['xau_aggression_seller'], CLIMAX_Z_WINDOW)
+    
+    xau_upper_shadow = xau_high - combined_data[['XAUUSD_open', 'XAUUSD_close']].max(axis=1)
+    xau_lower_shadow = combined_data[['XAUUSD_open', 'XAUUSD_close']].min(axis=1) - xau_low
+    metrics['xau_rejection_buyer'] = (xau_lower_shadow / xau_body).where(xau_lower_shadow > xau_body * SHADOW_TO_BODY_RATIO, 0)
+    metrics['xau_rejection_seller'] = (xau_upper_shadow / xau_body).where(xau_upper_shadow > xau_body * SHADOW_TO_BODY_RATIO, 0)
+
+    # --- 2. Cálculo das Métricas de Amplitude (Score de Correlação) ---
     for s, weight in asset_weights.items():
-        close_col, open_col, high_col, low_col, vol_col = f"{s}_close", f"{s}_open", f"{s}_high", f"{s}_low", f"{s}_volume"
+        close_col, open_col = f"{s}_close", f"{s}_open"
         if close_col not in combined_data.columns: continue
 
         if isinstance(weight, pd.Series):
             weight = weight.reindex(combined_data.index, method='ffill').fillna(0)
 
-        strength_condition = (combined_data[close_col] > combined_data[open_col])
-        atr = calculate_atr(combined_data[high_col], combined_data[low_col], combined_data[close_col], ATR_PERIOD).replace(0, np.nan)
-        
-        is_high_energy = (combined_data[high_col] - combined_data[low_col]) / atr > ENERGY_THRESHOLD
-        aggression_buyer += (strength_condition & is_high_energy).astype(int) * weight
-        aggression_seller += (~strength_condition & is_high_energy).astype(int) * weight
-        
-        body = abs(combined_data[close_col] - combined_data[open_col]).replace(0, 0.00001)
-        upper_shadow = combined_data[high_col] - combined_data[[open_col, close_col]].max(axis=1)
-        lower_shadow = combined_data[[open_col, close_col]].min(axis=1) - combined_data[low_col]
-        rejection_buyer += (lower_shadow > body * SHADOW_TO_BODY_RATIO).astype(int) * weight
-        rejection_seller += (upper_shadow > body * SHADOW_TO_BODY_RATIO).astype(int) * weight
-
-        volume_ma = combined_data[vol_col].rolling(window=VOLUME_MA_PERIOD).mean().replace(0, np.nan)
-        volume_strength = (combined_data[vol_col] / volume_ma).fillna(1)
+        atr = calculate_atr(combined_data[f"{s}_high"], combined_data[f"{s}_low"], combined_data[close_col], ATR_PERIOD).replace(0, np.nan)
+        volume_ma = combined_data[f"{s}_volume"].rolling(window=VOLUME_MA_PERIOD).mean().replace(0, np.nan)
+        volume_strength = (combined_data[f"{s}_volume"] / volume_ma).fillna(1)
 
         for p in MA_PERIODS:
             ema_val = combined_data[close_col].ewm(span=p, adjust=False).mean()
             above_ema = (combined_data[close_col] > ema_val)
+            
+            # Ponderação pela Correlação
             metrics['weighted_counts'][p] += above_ema.astype(int) * weight
+            
             normalized_distance = ((combined_data[close_col] - ema_val) / atr).fillna(0)
             metrics['qualified_counts'][p] += (normalized_distance > CONVICTION_THRESHOLD).astype(int) * weight
             metrics['volume_force_indices'][p] += (normalized_distance * volume_strength) * weight
         
+        # Momentum
         roc = combined_data[close_col].pct_change(periods=MOMENTUM_PERIOD)
         normalized_momentum = calculate_zscore(roc, MOMENTUM_Z_WINDOW)
         momentum_components.append(normalized_momentum * weight)
 
-    metrics['aggression_buyer'], metrics['aggression_seller'] = aggression_buyer, aggression_seller
-    metrics['rejection_buyer'], metrics['rejection_seller'] = rejection_buyer, rejection_seller
-    metrics['buyer_climax_zscore'] = calculate_zscore(aggression_buyer, CLIMAX_Z_WINDOW)
-    metrics['seller_climax_zscore'] = calculate_zscore(aggression_seller, CLIMAX_Z_WINDOW)
     metrics['aggregate_momentum_index'] = pd.concat(momentum_components, axis=1).sum(axis=1) if momentum_components else pd.Series(0.0, index=combined_data.index)
     
     metrics['rocs'], metrics['accelerations'] = {}, {}
     metrics['qualified_zscore'] = {} 
     for p in MA_PERIODS:
-        metrics['rocs'][p] = metrics['weighted_counts'][p].diff()
-        metrics['accelerations'][p] = metrics['rocs'][p].diff()
+        series_wc = metrics['weighted_counts'][p]
+        metrics['rocs'][p] = series_wc.diff()
+        metrics['accelerations'][p] = series_wc.diff().diff()
         metrics['qualified_zscore'][p] = calculate_zscore(metrics['qualified_counts'][p], Z_SCORE_WINDOW) 
 
     return metrics
 
-def display_charts(container, metrics, title_prefix, theme_colors, overlay_price_data, selected_charts, key_prefix, is_dynamic_weights=False):
+def display_charts(column, metrics, title_prefix, theme_colors, overlay_price_data, selected_charts, key_prefix, is_dynamic_weights=False):
     
     def create_fig_with_overlay(title):
         fig = go.Figure()
@@ -205,8 +183,9 @@ def display_charts(container, metrics, title_prefix, theme_colors, overlay_price
         return fig
 
     if 'Indicador de Divergência de Agressão' in selected_charts and not overlay_price_data.empty:
-        buyer_climax = metrics['buyer_climax_zscore'] > 1
-        seller_climax = metrics['seller_climax_zscore'] > 1
+        # Lógica de Divergência XAUUSD-ONLY
+        buyer_climax = metrics['xau_buyer_climax_zscore'] > 1
+        seller_climax = metrics['xau_seller_climax_zscore'] > 1
         candle_is_up = overlay_price_data['close'] > overlay_price_data['open']
 
         confirmation_buy = buyer_climax & candle_is_up
@@ -223,7 +202,7 @@ def display_charts(container, metrics, title_prefix, theme_colors, overlay_price
         fig.add_trace(go.Scatter(x=overlay_price_data[divergence_sell].index, y=overlay_price_data[divergence_sell]['high'], mode='markers', marker=dict(symbol='diamond', color='magenta', size=10), name='Divergência Venda'))
         fig.update_layout(title='Indicador de Clímax e Resultado', height=350, margin=dict(t=30, b=40, l=10, r=10), template="plotly_dark", xaxis_rangeslider_visible=False,
                           legend=dict(orientation="h", yanchor="bottom", y=-0.5, xanchor="right", x=1))
-        container.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_divergence")
+        column.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_divergence")
 
     if 'Força Ponderada (Contagem)' in selected_charts:
         for p, series in metrics['weighted_counts'].items():
@@ -231,7 +210,7 @@ def display_charts(container, metrics, title_prefix, theme_colors, overlay_price
             fig.add_trace(go.Scatter(x=series.tail(NUM_CANDLES_DISPLAY).index, y=series.tail(NUM_CANDLES_DISPLAY).values, name='Força', mode="lines", fill="tozeroy", line_color=theme_colors['main'], opacity=0.7))
             fig.add_trace(go.Scatter(x=overlay_price_data['close'].index, y=overlay_price_data['close'].values, name='XAUUSD', yaxis='y2', line=dict(color=theme_colors['overlay'], width=1.5, dash='dot')))
             if not is_dynamic_weights: fig.update_layout(yaxis=dict(range=[0, 100]))
-            container.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_wc_{p}")
+            column.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_wc_{p}")
             
     if 'Força Qualificada (Filtro)' in selected_charts:
         for p, series in metrics['qualified_counts'].items():
@@ -239,7 +218,7 @@ def display_charts(container, metrics, title_prefix, theme_colors, overlay_price
             fig.add_trace(go.Scatter(x=series.tail(NUM_CANDLES_DISPLAY).index, y=series.tail(NUM_CANDLES_DISPLAY).values, name='Qualificada', mode="lines", fill="tozeroy", line_color=theme_colors['qualified']))
             fig.add_trace(go.Scatter(x=overlay_price_data['close'].index, y=overlay_price_data['close'].values, name='XAUUSD', yaxis='y2', line=dict(color=theme_colors['overlay'], width=1.5, dash='dot')))
             if not is_dynamic_weights: fig.update_layout(yaxis=dict(range=[0, 100]))
-            container.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_qc_{p}")
+            column.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_qc_{p}")
 
     if 'Z-Score da Força Qualificada' in selected_charts:
         for p, series in metrics['qualified_zscore'].items():
@@ -252,17 +231,27 @@ def display_charts(container, metrics, title_prefix, theme_colors, overlay_price
 
     if 'Velocidade e Aceleração' in selected_charts and MA_PERIODS:
         p_short = MA_PERIODS[0]
-        roc_series = metrics['rocs'][p_short].tail(NUM_CANDLES_DISPLAY)
-        fig_roc = create_fig_with_overlay(f'Velocidade (ROC EMA {p_short})')
-        fig_roc.add_trace(go.Bar(x=roc_series.index, y=roc_series.values, name='ROC', marker_color=['green' if v >= 0 else 'red' for v in roc_series.values]))
+        # XAUUSD-ONLY ROC/Aceleração
+        xau_roc = metrics['xau_roc'][p_short].tail(NUM_CANDLES_DISPLAY)
+        xau_accel = metrics['xau_accel'][p_short].tail(NUM_CANDLES_DISPLAY)
+
+        fig_roc = create_fig_with_overlay(f'Velocidade (ROC XAUUSD {p_short})')
+        fig_roc.add_trace(go.Bar(x=xau_roc.index, y=xau_roc.values, name='ROC', marker_color=['green' if v >= 0 else 'red' for v in xau_roc.values]))
         fig_roc.add_trace(go.Scatter(x=overlay_price_data['close'].index, y=overlay_price_data['close'].values, name='XAUUSD', yaxis='y2', line=dict(color=theme_colors['overlay'], width=1.5, dash='dot')))
         fig_roc.update_layout(height=200)
         container.plotly_chart(fig_roc, use_container_width=True, key=f"{key_prefix}_roc")
 
+        fig_accel = create_fig_with_overlay(f'Aceleração (XAUUSD {p_short})')
+        fig_accel.add_trace(go.Bar(x=xau_accel.index, y=xau_accel.values, name='Aceleração', marker_color=['#1f77b4' if v >= 0 else '#ff7f0e' for v in xau_accel.values]))
+        fig_accel.add_trace(go.Scatter(x=overlay_price_data['close'].index, y=overlay_price_data['close'].values, name='XAUUSD', yaxis='y2', line=dict(color=theme_colors['overlay'], width=1.5, dash='dot')))
+        fig_accel.update_layout(height=200)
+        container.plotly_chart(fig_accel, use_container_width=True, key=f"{key_prefix}_accel")
+
+
     if 'Indicador de Clímax de Agressão' in selected_charts:
-        buyer_series = metrics['buyer_climax_zscore'].tail(NUM_CANDLES_DISPLAY).clip(lower=0)
-        seller_series = metrics['seller_climax_zscore'].tail(NUM_CANDLES_DISPLAY).clip(lower=0)
-        fig = create_fig_with_overlay('Indicador de Clímax de Agressão')
+        buyer_series = metrics['xau_buyer_climax_zscore'].tail(NUM_CANDLES_DISPLAY).clip(lower=0)
+        seller_series = metrics['xau_seller_climax_zscore'].tail(NUM_CANDLES_DISPLAY).clip(lower=0)
+        fig = create_fig_with_overlay('Clímax de Agressão (XAUUSD)')
         fig.add_trace(go.Bar(x=buyer_series.index, y=buyer_series.values, name='Clímax Comprador', marker_color='green'))
         fig.add_trace(go.Bar(x=seller_series.index, y=seller_series.values, name='Clímax Vendedor', marker_color='red'))
         fig.add_trace(go.Scatter(x=overlay_price_data['close'].index, y=overlay_price_data['close'].values, name='XAUUSD', yaxis='y2', line=dict(color=theme_colors['overlay'], width=1.5, dash='dot')))
@@ -271,9 +260,9 @@ def display_charts(container, metrics, title_prefix, theme_colors, overlay_price
         container.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_climax_agg")
 
     if 'Indicador de Clímax de Rejeição' in selected_charts:
-        buyer_series = metrics['rejection_buyer'].tail(NUM_CANDLES_DISPLAY)
-        seller_series = metrics['rejection_seller'].tail(NUM_CANDLES_DISPLAY)
-        fig = create_fig_with_overlay('Indicador de Clímax de Rejeição')
+        buyer_series = metrics['xau_rejection_buyer'].tail(NUM_CANDLES_DISPLAY)
+        seller_series = metrics['xau_rejection_seller'].tail(NUM_CANDLES_DISPLAY)
+        fig = create_fig_with_overlay('Clímax de Rejeição (XAUUSD)')
         fig.add_trace(go.Bar(x=buyer_series.index, y=buyer_series.values, name='Rejeição Compradora', marker_color='lime'))
         fig.add_trace(go.Bar(x=seller_series.index, y=seller_series.values, name='Rejeição Vendedora', marker_color='pink'))
         fig.add_trace(go.Scatter(x=overlay_price_data['close'].index, y=overlay_price_data['close'].values, name='XAUUSD', yaxis='y2', line=dict(color=theme_colors['overlay'], width=1.5, dash='dot')))
@@ -302,7 +291,6 @@ def display_charts(container, metrics, title_prefix, theme_colors, overlay_price
 st.title("🥇 Painel de Análise Avançada XAUUSD")
 
 placeholder = st.empty()
-corr_summary_placeholder = st.empty()
 xauusd_basket = list(set(ALL_UNIQUE_ASSETS) - {'XAUUSD', 'XAGUSD'})
 
 def process_timeframe(timeframe):
@@ -311,17 +299,29 @@ def process_timeframe(timeframe):
     if combined_data.empty or 'XAUUSD_close' not in combined_data.columns:
         return timeframe, None, None, None
     
-    # Cesta para a aba XAUUSD (Risk-On e Risk-Off combinados)
-    xauusd_analysis_basket = list(set(RISK_ON_ASSETS.keys()) | set(RISK_OFF_ASSETS.keys()) - {'XAUUSD', 'XAGUSD'})
-    
-    # Pesos de correlação alinhados
-    dynamic_weights, latest_correlations = calculate_aligned_correlation_weights(
-        risk_on_basket=list(set(RISK_ON_ASSETS.keys()) - {'XAUUSD', 'XAGUSD'}),
-        risk_off_basket=list(RISK_OFF_ASSETS.keys()),
-        reference_asset_symbol='XAUUSD',
-        combined_data=combined_data,
-        window=CORRELATION_WINDOW
-    )
+    dynamic_weights = {}
+    latest_correlations = {}
+    if len(combined_data) > CORRELATION_WINDOW:
+        ref_returns = combined_data['XAUUSD_close'].pct_change()
+        # Cestas para o cálculo de correlação alinhada
+        risk_on_basket = list(set(RISK_ON_ASSETS.keys()) - {'XAUUSD', 'XAGUSD'})
+        risk_off_basket = list(RISK_OFF_ASSETS.keys())
+        
+        # Correlação para Risk-On (esperado > 0)
+        for s in risk_on_basket:
+            asset_returns = combined_data.get(f"{s}_close").pct_change()
+            if asset_returns is not None:
+                correlation = ref_returns.rolling(window=CORRELATION_WINDOW).corr(asset_returns)
+                dynamic_weights[s] = correlation.fillna(0)
+                if not correlation.empty: latest_correlations[s] = correlation.iloc[-1]
+        
+        # Correlação para Risk-Off (esperado < 0, então invertemos)
+        for s in risk_off_basket:
+            asset_returns = combined_data.get(f"{s}_close").pct_change()
+            if asset_returns is not None:
+                correlation = ref_returns.rolling(window=CORRELATION_WINDOW).corr(asset_returns)
+                dynamic_weights[s] = correlation.fillna(0) * -1 # Inverte para alinhar
+                if not correlation.empty: latest_correlations[s] = correlation.iloc[-1]
 
     if not dynamic_weights:
         return timeframe, None, None, None
@@ -349,15 +349,6 @@ if '1min' in results:
     else:
         placeholder.warning(f"🟠 ATENÇÃO: Atraso nos dados de {delay_minutes:.1f} min")
 
-    correlations = results['1min']['correlations']
-    if correlations:
-        latest_corr_values = {asset: value for asset, value in correlations.items() if pd.notna(value)}
-        if latest_corr_values:
-            avg_corr = np.mean(list(latest_corr_values.values()))
-            max_corr_asset = max(latest_corr_values, key=latest_corr_values.get)
-            min_corr_asset = min(latest_corr_values, key=latest_corr_values.get)
-            corr_summary_placeholder.markdown(f"<p style='font-size:12px; color:grey;'>Correlação Média: <b>{avg_corr:.2f}</b> | Maior: <b>{max_corr_asset} ({latest_corr_values[max_corr_asset]:.2f})</b> | Menor: <b>{min_corr_asset} ({latest_corr_values[min_corr_asset]:.2f})</b></p>", unsafe_allow_html=True)
-
 else:
     st.error("Não foi possível carregar os dados. Verifique a API.")
     st.stop()
@@ -378,11 +369,10 @@ with tab5:
 with tab_corr:
     st.header("Matriz de Correlação vs. XAUUSD (Baseado no Timeframe de 1 Minuto)")
     st.markdown("Mostra a correlação móvel mais recente de cada ativo com o XAUUSD.")
-    if '1min' in results and results['1min']['correlations']:
+    if '1min' in results:
         correlations = results['1min']['correlations']
         latest_corr_values = {asset: value for asset, value in correlations.items() if pd.notna(value)}
 
-        # Separa cestas para visualização
         risk_on_basket_corr = list(set(RISK_ON_ASSETS.keys()) - {'XAUUSD', 'XAGUSD'})
         risk_off_basket_corr = list(RISK_OFF_ASSETS.keys())
 
@@ -394,14 +384,13 @@ with tab_corr:
 
         col1_corr, col2_corr = st.columns(2)
         with col1_corr:
-            st.subheader("Cesta Risk-On (espera-se > 0)")
+            st.subheader("Ativos da Cesta Risk-On")
             st.dataframe(df_risk_on.style.background_gradient(cmap='RdYlGn', vmin=-1, vmax=1).format("{:.2f}"), use_container_width=True)
         with col2_corr:
-            st.subheader("Cesta Risk-Off (espera-se < 0)")
+            st.subheader("Ativos da Cesta Risk-Off")
             st.dataframe(df_risk_off.style.background_gradient(cmap='RdYlGn', vmin=-1, vmax=1).format("{:.2f}"), use_container_width=True)
     else:
         st.warning("Dados de correlação para o timeframe de 1 minuto ainda não estão disponíveis. Aguarde a próxima atualização.")
 
 
 st.caption("Feito com Streamlit • Dados via FinancialModelingPrep")
-
