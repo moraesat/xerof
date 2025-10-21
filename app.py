@@ -93,11 +93,9 @@ def build_combined_data(symbols: list, timeframe: str, candles_to_fetch: int) ->
                 data[symbol] = result
     if not data: return pd.DataFrame()
     
-    # Alinha os dataframes no mesmo índice de tempo
     base_index = data.get('XAUUSD', next(iter(data.values()))).index
     aligned_data = {symbol: df.reindex(base_index, method='ffill') for symbol, df in data.items()}
     
-    # Renomeia colunas após o alinhamento
     frames = [df.rename(columns=lambda c: f"{symbol}_{c}") for symbol, df in aligned_data.items()]
     return pd.concat(frames, axis=1).dropna()
 
@@ -121,7 +119,6 @@ def calculate_breadth_metrics(asset_weights: dict, combined_data: pd.DataFrame, 
         close_col, open_col, high_col, low_col, vol_col = f"{s}_close", f"{s}_open", f"{s}_high", f"{s}_low", f"{s}_volume"
         if close_col not in combined_data.columns: continue
 
-        # Garante o alinhamento do peso dinâmico com os dados atuais
         if isinstance(weight, pd.Series):
             weight = weight.reindex(combined_data.index, method='ffill').fillna(0)
 
@@ -163,7 +160,7 @@ def calculate_breadth_metrics(asset_weights: dict, combined_data: pd.DataFrame, 
 
     return metrics
 
-def display_charts(container, metrics, theme_colors, overlay_price_data, selected_charts, key_prefix, is_dynamic_weights=False):
+def display_charts(container, metrics, title_prefix, theme_colors, overlay_price_data, selected_charts, key_prefix, is_dynamic_weights=False):
     
     def create_fig_with_overlay(title):
         fig = go.Figure()
@@ -309,11 +306,11 @@ corr_colors = {'main': '#FFD700', 'accent': '#FFFACD', 'momentum': '#F0E68C', 'q
 
 with tab1:
     if '1min' in results:
-        display_charts(st, results['1min']['metrics'], "Análise de 1 Minuto", corr_colors, results['1min']['overlay'], SELECTED_CHARTS, "1min_charts")
+        display_charts(st, results['1min']['metrics'], "Análise de 1 Minuto", corr_colors, results['1min']['overlay'], SELECTED_CHARTS, "1min_charts", is_dynamic_weights=True)
 
 with tab5:
     if '5min' in results:
-        display_charts(st, results['5min']['metrics'], "Análise de 5 Minutos", corr_colors, results['5min']['overlay'], SELECTED_CHARTS, "5min_charts")
+        display_charts(st, results['5min']['metrics'], "Análise de 5 Minutos", corr_colors, results['5min']['overlay'], SELECTED_CHARTS, "5min_charts", is_dynamic_weights=True)
 
 st.caption("Feito com Streamlit • Dados via FinancialModelingPrep")
 
