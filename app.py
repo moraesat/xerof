@@ -281,6 +281,7 @@ placeholder = st.empty()
 corr_summary_placeholder = st.empty()
 xauusd_basket = list(set(ALL_UNIQUE_ASSETS) - {'XAUUSD', 'XAGUSD'})
 
+# --- LÓGICA DE EXECUÇÃO PARALELA PARA 1MIN E 5MIN ---
 def process_timeframe(timeframe):
     candles_to_fetch = (max(MA_PERIODS) if MA_PERIODS else 200) + NUM_CANDLES_DISPLAY + max(Z_SCORE_WINDOW, MOMENTUM_Z_WINDOW, CLIMAX_Z_WINDOW, CORRELATION_WINDOW)
     combined_data = build_combined_data(ALL_UNIQUE_ASSETS, timeframe, candles_to_fetch)
