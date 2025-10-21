@@ -278,7 +278,32 @@ with tab5:
         display_charts(st, results['5min']['metrics'], "Análise de 5 Minutos", corr_colors, results['5min']['overlay'], SELECTED_CHARTS, "5min_charts", is_dynamic_weights=True)
 
 with tab_corr:
-    # ... (código da aba de correlação, idêntico à versão anterior)
+    st.header("Matriz de Correlação vs. XAUUSD (Baseado no Timeframe de 1 Minuto)")
+    st.markdown("Mostra a correlação móvel mais recente de cada ativo com o XAUUSD.")
+    if '1min' in results and results['1min']['correlations']:
+        correlations = results['1min']['correlations']
+        latest_corr_values = {asset: value for asset, value in correlations.items() if pd.notna(value)}
+
+        # Separar por cesta original para visualização
+        risk_on_basket_corr = list(set(RISK_ON_ASSETS.keys()) - {'XAUUSD', 'XAGUSD'})
+        risk_off_basket_corr = list(RISK_OFF_ASSETS.keys())
+
+        risk_on_corr_data = {asset: corr for asset, corr in latest_corr_values.items() if asset in risk_on_basket_corr}
+        risk_off_corr_data = {asset: corr for asset, corr in latest_corr_values.items() if asset in risk_off_basket_corr}
+
+        df_risk_on = pd.DataFrame(list(risk_on_corr_data.items()), columns=['Ativo', 'Correlação']).sort_values(by='Correlação', ascending=False).set_index('Ativo')
+        df_risk_off = pd.DataFrame(list(risk_off_corr_data.items()), columns=['Ativo', 'Correlação']).sort_values(by='Correlação', ascending=False).set_index('Ativo')
+
+        col1_corr, col2_corr = st.columns(2)
+        with col1_corr:
+            st.subheader("Ativos da Cesta Risk-On")
+            st.dataframe(df_risk_on.style.background_gradient(cmap='RdYlGn', vmin=-1, vmax=1).format("{:.2f}"), use_container_width=True)
+        with col2_corr:
+            st.subheader("Ativos da Cesta Risk-Off")
+            st.dataframe(df_risk_off.style.background_gradient(cmap='RdYlGn', vmin=-1, vmax=1).format("{:.2f}"), use_container_width=True)
+    else:
+        st.warning("Dados de correlação para o timeframe de 1 minuto ainda não estão disponíveis. Aguarde a próxima atualização.")
+
 
 st.caption("Feito com Streamlit • Dados via FinancialModelingPrep")
 
