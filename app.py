@@ -163,7 +163,7 @@ def calculate_breadth_metrics(asset_weights: dict, combined_data: pd.DataFrame, 
 
     return metrics
 
-def display_charts(column, metrics, theme_colors, overlay_price_data, selected_charts, key_prefix):
+def display_charts(column, metrics, title_prefix, theme_colors, overlay_price_data, selected_charts, key_prefix):
     
     def create_fig_with_overlay(title):
         fig = go.Figure()
@@ -182,8 +182,8 @@ def display_charts(column, metrics, theme_colors, overlay_price_data, selected_c
 
         confirmation_buy = buyer_climax & candle_is_up
         confirmation_sell = seller_climax & ~candle_is_up
-        divergence_buy = seller_climax & candle_is_up  # Absorção de venda
-        divergence_sell = buyer_climax & ~candle_is_up # Absorção de compra
+        divergence_buy = seller_climax & candle_is_up
+        divergence_sell = buyer_climax & ~candle_is_up
 
         fig = go.Figure()
         fig.add_trace(go.Candlestick(x=overlay_price_data.index, open=overlay_price_data['open'], high=overlay_price_data['high'], low=overlay_price_data['low'], close=overlay_price_data['close'], name="XAUUSD", increasing_line_color= 'rgba(255,255,255,0.7)', decreasing_line_color= 'rgba(255,255,255,0.7)'))
