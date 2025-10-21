@@ -121,6 +121,10 @@ def calculate_breadth_metrics(asset_weights: dict, combined_data: pd.DataFrame, 
         close_col, open_col, high_col, low_col, vol_col = f"{s}_close", f"{s}_open", f"{s}_high", f"{s}_low", f"{s}_volume"
         if close_col not in combined_data.columns: continue
 
+        # CORREÇÃO: Garante o alinhamento do peso dinâmico com os dados atuais
+        if isinstance(weight, pd.Series):
+            weight = weight.reindex(combined_data.index, method='ffill').fillna(0)
+
         strength_condition = (combined_data[close_col] > combined_data[open_col])
         atr = calculate_atr(combined_data[high_col], combined_data[low_col], combined_data[close_col], ATR_PERIOD).replace(0, np.nan)
         
@@ -195,7 +199,7 @@ def display_charts(column, metrics, theme_colors, overlay_price_data, selected_c
             fig = create_fig_with_overlay(f'Força Qualificada (Filtro EMA {p})')
             fig.add_trace(go.Scatter(x=series.tail(NUM_CANDLES_DISPLAY).index, y=series.tail(NUM_CANDLES_DISPLAY).values, name='Qualificada', mode="lines", fill="tozeroy", line_color=theme_colors['qualified']))
             fig.add_trace(go.Scatter(x=overlay_price_data['close'].index, y=overlay_price_data['close'].values, name='XAUUSD', yaxis='y2', line=dict(color=theme_colors['overlay'], width=1.5, dash='dot')))
-            fig.update_layout(yaxis=dict(range=[0, 100]))
+            fig.update_layout(yaxis=dict(range=[0, None if is_dynamic_weights else 100]))
             column.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_qc_{p}")
 
     if 'Z-Score da Força Qualificada' in selected_charts:
@@ -259,7 +263,6 @@ def process_timeframe(timeframe):
     if combined_data.empty or 'XAUUSD_close' not in combined_data.columns:
         return timeframe, None, None
     
-    # Usa pesos de correlação dinâmica apenas se houver dados suficientes
     dynamic_weights = {}
     if len(combined_data) > CORRELATION_WINDOW:
         ref_returns = combined_data['XAUUSD_close'].pct_change()
@@ -267,10 +270,10 @@ def process_timeframe(timeframe):
             asset_returns = combined_data.get(f"{s}_close").pct_change()
             if asset_returns is not None:
                 correlation = ref_returns.rolling(window=CORRELATION_WINDOW).corr(asset_returns)
-                dynamic_weights[s] = correlation.fillna(0) # Preenche NaNs iniciais com 0
+                dynamic_weights[s] = correlation.fillna(0)
 
     if not dynamic_weights:
-        return timeframe, None, None # Retorna se os pesos não puderem ser calculados
+        return timeframe, None, None
 
     metrics = calculate_breadth_metrics(dynamic_weights, combined_data, is_dynamic_weights=True)
     overlay_data = combined_data[[f"XAUUSD_open", f"XAUUSD_high", f"XAUUSD_low", f"XAUUSD_close"]].tail(NUM_CANDLES_DISPLAY)
