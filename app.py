@@ -121,7 +121,7 @@ def calculate_breadth_metrics(asset_weights: dict, combined_data: pd.DataFrame, 
         close_col, open_col, high_col, low_col, vol_col = f"{s}_close", f"{s}_open", f"{s}_high", f"{s}_low", f"{s}_volume"
         if close_col not in combined_data.columns: continue
 
-        # CORREÇÃO: Garante o alinhamento do peso dinâmico com os dados atuais
+        # Garante o alinhamento do peso dinâmico com os dados atuais
         if isinstance(weight, pd.Series):
             weight = weight.reindex(combined_data.index, method='ffill').fillna(0)
 
@@ -163,7 +163,7 @@ def calculate_breadth_metrics(asset_weights: dict, combined_data: pd.DataFrame, 
 
     return metrics
 
-def display_charts(column, metrics, title_prefix, theme_colors, overlay_price_data, selected_charts, key_prefix):
+def display_charts(container, metrics, theme_colors, overlay_price_data, selected_charts, key_prefix, is_dynamic_weights=False):
     
     def create_fig_with_overlay(title):
         fig = go.Figure()
@@ -192,15 +192,15 @@ def display_charts(column, metrics, title_prefix, theme_colors, overlay_price_da
         fig.add_trace(go.Scatter(x=overlay_price_data[divergence_buy].index, y=overlay_price_data[divergence_buy]['low'], mode='markers', marker=dict(symbol='diamond', color='cyan', size=10), name='Divergência Compra'))
         fig.add_trace(go.Scatter(x=overlay_price_data[divergence_sell].index, y=overlay_price_data[divergence_sell]['high'], mode='markers', marker=dict(symbol='diamond', color='magenta', size=10), name='Divergência Venda'))
         fig.update_layout(title='Indicador de Clímax e Resultado', height=300, margin=dict(t=30, b=10, l=10, r=10), template="plotly_dark", xaxis_rangeslider_visible=False)
-        column.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_divergence")
+        container.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_divergence")
 
     if 'Força Qualificada (Filtro)' in selected_charts:
         for p, series in metrics['qualified_counts'].items():
             fig = create_fig_with_overlay(f'Força Qualificada (Filtro EMA {p})')
             fig.add_trace(go.Scatter(x=series.tail(NUM_CANDLES_DISPLAY).index, y=series.tail(NUM_CANDLES_DISPLAY).values, name='Qualificada', mode="lines", fill="tozeroy", line_color=theme_colors['qualified']))
             fig.add_trace(go.Scatter(x=overlay_price_data['close'].index, y=overlay_price_data['close'].values, name='XAUUSD', yaxis='y2', line=dict(color=theme_colors['overlay'], width=1.5, dash='dot')))
-            fig.update_layout(yaxis=dict(range=[0, None if is_dynamic_weights else 100]))
-            column.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_qc_{p}")
+            if not is_dynamic_weights: fig.update_layout(yaxis=dict(range=[0, 100]))
+            container.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_qc_{p}")
 
     if 'Z-Score da Força Qualificada' in selected_charts:
         for p, series in metrics['qualified_zscore'].items():
@@ -209,7 +209,7 @@ def display_charts(column, metrics, title_prefix, theme_colors, overlay_price_da
             fig.add_trace(go.Scatter(x=overlay_price_data['close'].index, y=overlay_price_data['close'].values, name='XAUUSD', yaxis='y2', line=dict(color=theme_colors['overlay'], width=1.5, dash='dot')))
             fig.add_hline(y=2, line_dash="dot", line_color="white", opacity=0.5); fig.add_hline(y=-2, line_dash="dot", line_color="white", opacity=0.5)
             fig.update_layout(yaxis=dict(range=[-3.5, 3.5]))
-            column.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_zqc_{p}")
+            container.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_zqc_{p}")
 
     if 'Indicador de Clímax de Agressão' in selected_charts:
         buyer_series = metrics['buyer_climax_zscore'].tail(NUM_CANDLES_DISPLAY).clip(lower=0)
@@ -220,7 +220,7 @@ def display_charts(column, metrics, title_prefix, theme_colors, overlay_price_da
         fig.add_trace(go.Scatter(x=overlay_price_data['close'].index, y=overlay_price_data['close'].values, name='XAUUSD', yaxis='y2', line=dict(color=theme_colors['overlay'], width=1.5, dash='dot')))
         fig.add_hline(y=3, line_dash="dot", line_color="white")
         fig.update_layout(barmode='relative')
-        column.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_climax_agg")
+        container.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_climax_agg")
 
     if 'Indicador de Clímax de Rejeição' in selected_charts:
         buyer_series = metrics['rejection_buyer'].tail(NUM_CANDLES_DISPLAY)
@@ -230,7 +230,7 @@ def display_charts(column, metrics, title_prefix, theme_colors, overlay_price_da
         fig.add_trace(go.Bar(x=seller_series.index, y=seller_series.values, name='Rejeição Vendedora', marker_color='pink'))
         fig.add_trace(go.Scatter(x=overlay_price_data['close'].index, y=overlay_price_data['close'].values, name='XAUUSD', yaxis='y2', line=dict(color=theme_colors['overlay'], width=1.5, dash='dot')))
         fig.update_layout(barmode='relative')
-        column.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_climax_rej")
+        container.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_climax_rej")
 
     if 'Índice de Momentum Agregado' in selected_charts:
         series = metrics['aggregate_momentum_index'].tail(NUM_CANDLES_DISPLAY)
@@ -238,7 +238,7 @@ def display_charts(column, metrics, title_prefix, theme_colors, overlay_price_da
         fig.add_trace(go.Scatter(x=series.index, y=series.values, name='Momentum', line=dict(color=theme_colors['momentum']), fill='tozeroy'))
         fig.add_trace(go.Scatter(x=overlay_price_data['close'].index, y=overlay_price_data['close'].values, name='XAUUSD', yaxis='y2', line=dict(color=theme_colors['overlay'], width=1.5, dash='dot')))
         fig.add_hline(y=0, line_dash="dash", line_color="grey")
-        column.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_momentum")
+        container.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_momentum")
     
     if 'Índice de Força de Volume (VFI)' in selected_charts:
         for p, series in metrics['volume_force_indices'].items():
@@ -246,7 +246,7 @@ def display_charts(column, metrics, title_prefix, theme_colors, overlay_price_da
             fig.add_trace(go.Scatter(x=series.tail(NUM_CANDLES_DISPLAY).index, y=series.tail(NUM_CANDLES_DISPLAY).values, name='VFI', mode="lines", line_color=theme_colors['vfi'], fill='tozeroy'))
             fig.add_trace(go.Scatter(x=overlay_price_data['close'].index, y=overlay_price_data['close'].values, name='XAUUSD', yaxis='y2', line=dict(color=theme_colors['overlay'], width=1.5, dash='dot')))
             fig.add_hline(y=0, line_dash="dash", line_color="grey")
-            column.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_vfi_{p}")
+            container.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_vfi_{p}")
 
 # ===========================
 # Lógica Principal da Aplicação
@@ -304,14 +304,16 @@ else:
 
 
 # --- VISUALIZAÇÃO ---
-col1, col2 = st.columns(2)
+tab1, tab5 = st.tabs(["Análise de 1 Minuto", "Análise de 5 Minutos"])
 corr_colors = {'main': '#FFD700', 'accent': '#FFFACD', 'momentum': '#F0E68C', 'qualified': '#EEE8AA', 'conviction_z': '#FFECB3', 'vfi': '#FFC107', 'overlay': 'rgba(255, 255, 255, 0.6)'}
 
-if '1min' in results:
-    display_charts(col1, results['1min']['metrics'], "Análise de 1 Minuto", corr_colors, results['1min']['overlay'], SELECTED_CHARTS, "1min_charts")
+with tab1:
+    if '1min' in results:
+        display_charts(st, results['1min']['metrics'], "Análise de 1 Minuto", corr_colors, results['1min']['overlay'], SELECTED_CHARTS, "1min_charts")
 
-if '5min' in results:
-    display_charts(col2, results['5min']['metrics'], "Análise de 5 Minutos", corr_colors, results['5min']['overlay'], SELECTED_CHARTS, "5min_charts")
+with tab5:
+    if '5min' in results:
+        display_charts(st, results['5min']['metrics'], "Análise de 5 Minutos", corr_colors, results['5min']['overlay'], SELECTED_CHARTS, "5min_charts")
 
 st.caption("Feito com Streamlit • Dados via FinancialModelingPrep")
 
