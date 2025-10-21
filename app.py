@@ -107,6 +107,15 @@ def calculate_atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int
 def calculate_zscore(series: pd.Series, window: int) -> pd.Series:
     return (series - series.rolling(window=window).mean()) / series.rolling(window=window).std()
 
+def calculate_dynamic_correlation_weights(asset_list, reference_asset_symbol, combined_data, window):
+    weights = {}
+    ref_returns = combined_data[f"{reference_asset_symbol}_close"].pct_change()
+    for asset in asset_list:
+        asset_returns = combined_data.get(f"{asset}_close", pd.Series(dtype=float)).pct_change()
+        if not asset_returns.empty:
+            weights[asset] = ref_returns.rolling(window=window).corr(asset_returns)
+    return weights
+
 def calculate_breadth_metrics(asset_weights: dict, combined_data: pd.DataFrame, is_dynamic_weights=False):
     metrics = {}
     metrics['weighted_counts'] = {p: pd.Series(0.0, index=combined_data.index) for p in MA_PERIODS}
@@ -164,13 +173,13 @@ def calculate_breadth_metrics(asset_weights: dict, combined_data: pd.DataFrame, 
     metrics['qualified_zscore'] = {} 
     for p in MA_PERIODS:
         series_wc = metrics['weighted_counts'][p]
-        metrics['rocs'][p] = series_wc.diff()
-        metrics['accelerations'][p] = series_wc.diff().diff()
+        metrics['rocs'][p] = metrics['weighted_counts'][p].diff()
+        metrics['accelerations'][p] = metrics['rocs'][p].diff()
         metrics['qualified_zscore'][p] = calculate_zscore(metrics['qualified_counts'][p], Z_SCORE_WINDOW) 
 
     return metrics
 
-def display_charts(column, metrics, title_prefix, theme_colors, overlay_price_data, selected_charts, key_prefix, is_dynamic_weights=False):
+def display_charts(container, metrics, title_prefix, theme_colors, overlay_price_data, selected_charts, key_prefix, is_dynamic_weights=False):
     
     def create_fig_with_overlay(title):
         fig = go.Figure()
@@ -183,7 +192,6 @@ def display_charts(column, metrics, title_prefix, theme_colors, overlay_price_da
         return fig
 
     if 'Indicador de Divergência de Agressão' in selected_charts and not overlay_price_data.empty:
-        # Lógica de Divergência XAUUSD-ONLY
         buyer_climax = metrics['xau_buyer_climax_zscore'] > 1
         seller_climax = metrics['xau_seller_climax_zscore'] > 1
         candle_is_up = overlay_price_data['close'] > overlay_price_data['open']
@@ -227,7 +235,7 @@ def display_charts(column, metrics, title_prefix, theme_colors, overlay_price_da
             fig.add_trace(go.Scatter(x=overlay_price_data['close'].index, y=overlay_price_data['close'].values, name='XAUUSD', yaxis='y2', line=dict(color=theme_colors['overlay'], width=1.5, dash='dot')))
             fig.add_hline(y=2, line_dash="dot", line_color="white", opacity=0.5); fig.add_hline(y=-2, line_dash="dot", line_color="white", opacity=0.5)
             fig.update_layout(yaxis=dict(range=[-3.5, 3.5]))
-            container.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_zqc_{p}")
+            column.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_zqc_{p}")
 
     if 'Velocidade e Aceleração' in selected_charts and MA_PERIODS:
         p_short = MA_PERIODS[0]
@@ -239,14 +247,7 @@ def display_charts(column, metrics, title_prefix, theme_colors, overlay_price_da
         fig_roc.add_trace(go.Bar(x=xau_roc.index, y=xau_roc.values, name='ROC', marker_color=['green' if v >= 0 else 'red' for v in xau_roc.values]))
         fig_roc.add_trace(go.Scatter(x=overlay_price_data['close'].index, y=overlay_price_data['close'].values, name='XAUUSD', yaxis='y2', line=dict(color=theme_colors['overlay'], width=1.5, dash='dot')))
         fig_roc.update_layout(height=200)
-        container.plotly_chart(fig_roc, use_container_width=True, key=f"{key_prefix}_roc")
-
-        fig_accel = create_fig_with_overlay(f'Aceleração (XAUUSD {p_short})')
-        fig_accel.add_trace(go.Bar(x=xau_accel.index, y=xau_accel.values, name='Aceleração', marker_color=['#1f77b4' if v >= 0 else '#ff7f0e' for v in xau_accel.values]))
-        fig_accel.add_trace(go.Scatter(x=overlay_price_data['close'].index, y=overlay_price_data['close'].values, name='XAUUSD', yaxis='y2', line=dict(color=theme_colors['overlay'], width=1.5, dash='dot')))
-        fig_accel.update_layout(height=200)
-        container.plotly_chart(fig_accel, use_container_width=True, key=f"{key_prefix}_accel")
-
+        column.plotly_chart(fig_roc, use_container_width=True, key=f"{key_prefix}_roc")
 
     if 'Indicador de Clímax de Agressão' in selected_charts:
         buyer_series = metrics['xau_buyer_climax_zscore'].tail(NUM_CANDLES_DISPLAY).clip(lower=0)
@@ -257,7 +258,7 @@ def display_charts(column, metrics, title_prefix, theme_colors, overlay_price_da
         fig.add_trace(go.Scatter(x=overlay_price_data['close'].index, y=overlay_price_data['close'].values, name='XAUUSD', yaxis='y2', line=dict(color=theme_colors['overlay'], width=1.5, dash='dot')))
         fig.add_hline(y=3, line_dash="dot", line_color="white")
         fig.update_layout(barmode='relative')
-        container.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_climax_agg")
+        column.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_climax_agg")
 
     if 'Indicador de Clímax de Rejeição' in selected_charts:
         buyer_series = metrics['xau_rejection_buyer'].tail(NUM_CANDLES_DISPLAY)
@@ -267,7 +268,7 @@ def display_charts(column, metrics, title_prefix, theme_colors, overlay_price_da
         fig.add_trace(go.Bar(x=seller_series.index, y=seller_series.values, name='Rejeição Vendedora', marker_color='pink'))
         fig.add_trace(go.Scatter(x=overlay_price_data['close'].index, y=overlay_price_data['close'].values, name='XAUUSD', yaxis='y2', line=dict(color=theme_colors['overlay'], width=1.5, dash='dot')))
         fig.update_layout(barmode='relative')
-        container.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_climax_rej")
+        column.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_climax_rej")
 
     if 'Índice de Momentum Agregado' in selected_charts:
         series = metrics['aggregate_momentum_index'].tail(NUM_CANDLES_DISPLAY)
@@ -275,7 +276,7 @@ def display_charts(column, metrics, title_prefix, theme_colors, overlay_price_da
         fig.add_trace(go.Scatter(x=series.index, y=series.values, name='Momentum', line=dict(color=theme_colors['momentum']), fill='tozeroy'))
         fig.add_trace(go.Scatter(x=overlay_price_data['close'].index, y=overlay_price_data['close'].values, name='XAUUSD', yaxis='y2', line=dict(color=theme_colors['overlay'], width=1.5, dash='dot')))
         fig.add_hline(y=0, line_dash="dash", line_color="grey")
-        container.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_momentum")
+        column.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_momentum")
     
     if 'Índice de Força de Volume (VFI)' in selected_charts:
         for p, series in metrics['volume_force_indices'].items():
@@ -283,7 +284,7 @@ def display_charts(column, metrics, title_prefix, theme_colors, overlay_price_da
             fig.add_trace(go.Scatter(x=series.tail(NUM_CANDLES_DISPLAY).index, y=series.tail(NUM_CANDLES_DISPLAY).values, name='VFI', mode="lines", line_color=theme_colors['vfi'], fill='tozeroy'))
             fig.add_trace(go.Scatter(x=overlay_price_data['close'].index, y=overlay_price_data['close'].values, name='XAUUSD', yaxis='y2', line=dict(color=theme_colors['overlay'], width=1.5, dash='dot')))
             fig.add_hline(y=0, line_dash="dash", line_color="grey")
-            container.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_vfi_{p}")
+            column.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_vfi_{p}")
 
 # ===========================
 # Lógica Principal da Aplicação
@@ -329,7 +330,32 @@ def process_timeframe(timeframe):
     metrics = calculate_breadth_metrics(dynamic_weights, combined_data, is_dynamic_weights=True)
     overlay_data = combined_data[[f"XAUUSD_open", f"XAUUSD_high", f"XAUUSD_low", f"XAUUSD_close"]].tail(NUM_CANDLES_DISPLAY)
     overlay_data.columns = ['open', 'high', 'low', 'close']
+    
+    # --- Adicionar Métricas XAUUSD-Only ---
+    xau_close, xau_open, xau_high, xau_low = overlay_data['close'], overlay_data['open'], overlay_data['high'], overlay_data['low']
+    xau_atr = calculate_atr(xau_high, xau_low, xau_close, ATR_PERIOD).replace(0, np.nan)
+    xau_energy = (xau_high - xau_low) / xau_atr
+    xau_body = abs(xau_close - xau_open).replace(0, 0.00001)
+
+    metrics['xau_aggression_buyer'] = xau_energy.where((xau_close > xau_open) & (xau_energy > ENERGY_THRESHOLD), 0)
+    metrics['xau_aggression_seller'] = xau_energy.where((xau_close < xau_open) & (xau_energy > ENERGY_THRESHOLD), 0)
+    metrics['xau_buyer_climax_zscore'] = calculate_zscore(metrics['xau_aggression_buyer'], CLIMAX_Z_WINDOW)
+    metrics['xau_seller_climax_zscore'] = calculate_zscore(metrics['xau_aggression_seller'], CLIMAX_Z_WINDOW)
+    
+    xau_upper_shadow = xau_high - combined_data[['XAUUSD_open', 'XAUUSD_close']].max(axis=1)
+    xau_lower_shadow = combined_data[['XAUUSD_open', 'XAUUSD_close']].min(axis=1) - xau_low
+    
+    metrics['xau_rejection_buyer'] = (xau_lower_shadow / xau_body).where(xau_lower_shadow > xau_body * SHADOW_TO_BODY_RATIO, 0)
+    metrics['xau_rejection_seller'] = (xau_upper_shadow / xau_body).where(xau_upper_shadow > xau_body * SHADOW_TO_BODY_RATIO, 0)
+
+    # --- Adicionar ROC/Accel do XAUUSD-ONLY ---
+    for p in MA_PERIODS:
+        xau_close = combined_data['XAUUSD_close']
+        metrics['xau_roc'] = {p: xau_close.diff()}
+        metrics['xau_accel'] = {p: xau_close.diff().diff()}
+    
     return timeframe, metrics, overlay_data, latest_correlations
+
 
 results = {}
 with st.spinner("A processar dados multi-timeframe..."):
