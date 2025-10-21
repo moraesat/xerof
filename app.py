@@ -189,8 +189,8 @@ def display_charts(column, metrics, title_prefix, theme_colors, overlay_price_da
         fig.add_trace(go.Candlestick(x=overlay_price_data.index, open=overlay_price_data['open'], high=overlay_price_data['high'], low=overlay_price_data['low'], close=overlay_price_data['close'], name="XAUUSD", increasing_line_color= 'rgba(255,255,255,0.7)', decreasing_line_color= 'rgba(255,255,255,0.7)'))
         fig.add_trace(go.Scatter(x=overlay_price_data[confirmation_buy].index, y=overlay_price_data[confirmation_buy]['low'], mode='markers', marker=dict(symbol='triangle-up', color='lime', size=10), name='Confirmação Compra'))
         fig.add_trace(go.Scatter(x=overlay_price_data[confirmation_sell].index, y=overlay_price_data[confirmation_sell]['high'], mode='markers', marker=dict(symbol='triangle-down', color='red', size=10), name='Confirmação Venda'))
-        fig.add_trace(go.Scatter(x=overlay_price_data[divergence_buy].index, y=overlay_price_data[divergence_buy]['low'], mode='markers', marker=dict(symbol='diamond-up', color='cyan', size=10), name='Divergência Compra'))
-        fig.add_trace(go.Scatter(x=overlay_price_data[divergence_sell].index, y=overlay_price_data[divergence_sell]['high'], mode='markers', marker=dict(symbol='diamond-down', color='magenta', size=10), name='Divergência Venda'))
+        fig.add_trace(go.Scatter(x=overlay_price_data[divergence_buy].index, y=overlay_price_data[divergence_buy]['low'], mode='markers', marker=dict(symbol='diamond', color='cyan', size=10), name='Divergência Compra'))
+        fig.add_trace(go.Scatter(x=overlay_price_data[divergence_sell].index, y=overlay_price_data[divergence_sell]['high'], mode='markers', marker=dict(symbol='diamond', color='magenta', size=10), name='Divergência Venda'))
         fig.update_layout(title='Indicador de Clímax e Resultado', height=300, margin=dict(t=30, b=10, l=10, r=10), template="plotly_dark", xaxis_rangeslider_visible=False)
         column.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_divergence")
 
